@@ -1,0 +1,80 @@
+{
+  "gate_id": "GATE-01",
+  "gate_name": "GATE",
+  "gate_number": "02A",
+  "connection": {
+    "connection_type": "Webcam",
+    "ip_address": "192.168.1.165",
+    "port": 554,
+    "username": "admin",
+    "password": "admin@123",
+    "channel": 1,
+    "stream_quality": "sub",
+    "camera_brand": "Pelco",
+    "custom_url": "",
+    "webcam_index": 0
+  },
+  "runtime": {
+    "frame_read_fps": 30,
+    "detection_interval": 1,
+    "half_precision": false,
+    "image_quality": "High (Sharp)",
+    "confidence_threshold": 0.4,
+    "imgsz": 1280,
+    "enable_cropping": false,
+    "crop_left": 0,
+    "crop_top": 0,
+    "crop_right": 100,
+    "crop_bottom": 100,
+    "per_person_time_min": 22,
+    "per_person_time_max": 26,
+    "people_adjustment": 0,
+    "selected_model": "YOLOv12l",
+    "use_tta": false,
+    "max_det": 100,
+    "secondary_iou": 0.7,
+    "min_height_ratio": 0.018,
+    "min_area_ratio": 0.00015
+  },
+  "tracker": {
+    "enabled": false,
+    "ttl": 2,
+    "iou_thr": 0.4
+  },
+  "count_stabilization": {
+    "method": "EMA",
+    "avg_window_frames": 3,
+    "ema_alpha": 0.65,
+    "max_delta_per_detection": 1
+  },
+  "polygon_cropping": {
+    "enabled": false,
+    "points_count": 4,
+    "points": [
+      {
+        "x": 0.037078797064749265,
+        "y": 0.0515625
+      },
+      {
+        "x": 0.95269958041441,
+        "y": 0.0234375
+      },
+      {
+        "x": 0.9810909225337794,
+        "y": 0.9890625
+      },
+      {
+        "x": 0.02524907118167871,
+        "y": 0.9734375
+      }
+    ]
+  },
+  "display_config": {
+    "theme_option": "Dark (Airport Standard)",
+    "font_size_multiplier": 1,
+    "accent_color": "#1f77b4",
+    "people_count_color": "#1f77b4",
+    "brightness_level": 1,
+    "contrast_level": 1
+  }
+}

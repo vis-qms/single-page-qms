@@ -1,0 +1,384 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Airport Queue Display</title>
+  <style>
+    /* Exact styling copied from main FastAPI QMS app */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; overflow: hidden; }
+    #root { margin: 0; padding: 0; }
+    
+    /* Legacy QMS styling constants */
+    :root {
+      --sun-bg: #0A0D14;
+      --sun-text: #FFFFFF;
+      --sun-card-bg: #0E1420;
+      --sun-card-border: #2E3A52;
+      --sun-muted: #B9C0CC;
+      --sun-accent: #9CC2FF;
+      --sun-big: #FFFFFF;
+    }
+    
+    body {
+      font-family: ui-sans-serif, system-ui;
+    }
+    
+    /* Main container - exact copy from main app */
+    .display-container {
+      height: 100vh;
+      width: 100vw;
+      background: var(--sun-bg);
+      color: var(--sun-text);
+      font-family: ui-sans-serif, system-ui;
+      padding: 2vh 2vw;
+      overflow: hidden;
+      margin: 0;
+      position: fixed;
+      top: 0;
+      left: 0;
+      box-sizing: border-box;
+    }
+    
+    /* Gate header - exact copy */
+    .gate-header {
+      font-weight: 800;
+      text-align: center;
+      color: var(--sun-accent);
+      letter-spacing: .04em;
+      margin: 0.2rem 0 clamp(8px, 1.4vh, 18px) 0;
+      font-size: clamp(24px, 6vw, 96px);
+      line-height: 1.05;
+    }
+    
+    /* Separator lines - exact copy */
+    .separator {
+      height: 4px;
+      background: var(--sun-card-border);
+      margin: clamp(15px, 3vh, 25px) auto clamp(30px, 5vh, 40px) auto;
+      max-width: 80%;
+      border-radius: 2px;
+    }
+    
+    .main-separator {
+      height: 4px;
+      background: var(--sun-card-border);
+      margin: clamp(30px, 5vh, 50px) auto;
+      max-width: 80%;
+      border-radius: 2px;
+    }
+    
+    /* People section - exact copy */
+    .people-section {
+      text-align: center;
+      margin-bottom: clamp(20px, 4vh, 40px);
+    }
+    
+    .people-label {
+      font-weight: 700;
+      color: var(--sun-text);
+      text-align: center;
+      margin-bottom: clamp(6px, 1.4vh, 16px);
+      font-size: clamp(14px, 2.6vw, 40px);
+    }
+    
+    .people-count {
+      font-weight: 900;
+      text-align: center;
+      color: var(--sun-big);
+      line-height: 1.0;
+      margin: 0;
+      font-size: clamp(40px, 10vw, 160px);
+    }
+    
+    /* Wait time section - exact copy */
+    .wait-section {
+      text-align: center;
+    }
+    
+    .wait-label {
+      font-weight: 700;
+      color: var(--sun-text);
+      text-align: center;
+      margin-bottom: clamp(6px, 1.4vh, 16px);
+      font-size: clamp(14px, 2.6vw, 40px);
+    }
+    
+    .wait-band {
+      border-radius: clamp(10px, 1.6vw, 18px);
+      padding: clamp(10px, 1.8vw, 24px);
+      border: 1px solid #2a3a52;
+      display: inline-block;
+      min-width: 60%;
+    }
+    
+    .wait-band.blue {
+      background: #10253B;
+      color: #9CC2FF;
+    }
+    
+    .wait-band.green {
+      background: #0E3B20;
+      color: #4cff8f;
+    }
+    
+    .wait-band.yellow {
+      background: #3B370E;
+      color: #ffe066;
+    }
+    
+    .wait-band.red {
+      background: #3B0E13;
+      color: #ff6b6b;
+    }
+    
+    .wait-time {
+      font-weight: 900;
+      text-align: center;
+      line-height: 1.0;
+      margin: 0;
+      font-size: clamp(40px, 10vw, 160px);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    
+    /* Loading state */
+    .loading {
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--sun-bg);
+      color: var(--sun-text);
+      font-family: ui-sans-serif, system-ui;
+    }
+  </style>
+</head>
+<body>
+  <div id="loading" class="loading">
+    <div>Loading...</div>
+  </div>
+  
+  <div id="display" class="display-container" style="display: none;">
+    <!-- Header - Gate Name Only -->
+    <div class="gate-header" id="gateHeader">GATE 01</div>
+
+    <!-- Separator Line Below Gate Name -->
+    <div class="separator"></div>
+
+    <!-- People Section - No Card -->
+    <div class="people-section">
+      <div class="people-label">PEOPLE IN QUEUE</div>
+      <div class="people-count" id="peopleCount">0</div>
+    </div>
+
+    <!-- Main Separator Line -->
+    <div class="main-separator"></div>
+
+    <!-- Wait Time Section - No Card -->
+    <div class="wait-section">
+      <div class="wait-label">WAIT TIME</div>
+      <div id="waitBand" class="wait-band blue">
+        <div class="wait-time" id="waitText">NO WAIT</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Enhanced JavaScript matching the main app functionality
+    let wsConnection = null;
+    let fallbackInterval = null;
+    let isConnected = false;
+    
+    // URL parameters for customization
+    const params = new URLSearchParams(location.search);
+    const useWebSocket = params.get("ws") !== "false";
+    const refreshRate = parseInt(params.get("refresh")) || 500;
+    
+    // Format wait time - exact copy from main app
+    function formatWaitTime(seconds) {
+      if (seconds <= 0) return "NO WAIT";
+      
+      // Round to nearest minute based on 30-second threshold - exact logic from main app
+      let roundedMinutes;
+      if (seconds < 30) {
+        roundedMinutes = 0;
+      } else if (seconds < 90) {
+        roundedMinutes = 1;
+      } else {
+        roundedMinutes = Math.round(seconds / 60);
+      }
+      
+      if (roundedMinutes === 0) return "NO WAIT";
+      return `${roundedMinutes} MIN`;
+    }
+    
+    // Apply color-coded wait time band - exact logic from main app
+    function applyWaitBand(totalSeconds) {
+      const bandEl = document.getElementById("waitBand");
+      const textEl = document.getElementById("waitText");
+      
+      let className = "blue";
+      const text = formatWaitTime(totalSeconds);
+      
+      // Color coding based on wait time (matching main app logic)
+      if (totalSeconds <= 0) {
+        className = "blue";
+      } else if (totalSeconds < 900) { // < 15 minutes
+        className = "green";
+      } else if (totalSeconds < 2700) { // < 45 minutes
+        className = "yellow";
+      } else {
+        className = "red";
+      }
+      
+      bandEl.className = `wait-band ${className}`;
+      textEl.textContent = text;
+    }
+    
+    // Update display with data
+    function updateDisplay(data) {
+      try {
+        // Update gate header - exact format from main app
+        const gateName = data.gate_name || "GATE";
+        const gateNumber = data.gate_number || data.gate_id || "01";
+        document.getElementById("gateHeader").textContent = `${gateName.toUpperCase()} ${gateNumber}`;
+        
+        // Update people count
+        const peopleEl = document.getElementById("peopleCount");
+        const newCount = data.people_count ?? 0;
+        peopleEl.textContent = newCount;
+        
+        // Update wait time - use wait_seconds if available, otherwise convert from wait_time
+        const waitSeconds = data.wait_seconds || Math.round((data.wait_time || 0) * 60);
+        applyWaitBand(waitSeconds);
+        
+        // Show display if hidden
+        if (document.getElementById("display").style.display === "none") {
+          document.getElementById("loading").style.display = "none";
+          document.getElementById("display").style.display = "block";
+        }
+        
+        isConnected = true;
+      } catch (error) {
+        console.error("Error updating display:", error);
+      }
+    }
+    
+    // WebSocket connection
+    function connectWebSocket() {
+      if (!useWebSocket) return;
+      
+      try {
+        const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${location.host}/ws/status`;
+        
+        wsConnection = new WebSocket(wsUrl);
+        
+        wsConnection.onopen = function() {
+          console.log("WebSocket connected");
+          if (fallbackInterval) {
+            clearInterval(fallbackInterval);
+            fallbackInterval = null;
+          }
+        };
+        
+        wsConnection.onmessage = function(event) {
+          const data = JSON.parse(event.data);
+          updateDisplay(data);
+          // Send ping back
+          wsConnection.send("ping");
+        };
+        
+        wsConnection.onclose = function() {
+          console.log("WebSocket disconnected, falling back to polling");
+          wsConnection = null;
+          startFallbackPolling();
+        };
+        
+        wsConnection.onerror = function(error) {
+          console.error("WebSocket error:", error);
+          wsConnection = null;
+          startFallbackPolling();
+        };
+      } catch (error) {
+        console.error("Failed to connect WebSocket:", error);
+        startFallbackPolling();
+      }
+    }
+    
+    // Fallback HTTP polling
+    function startFallbackPolling() {
+      if (fallbackInterval) return;
+      
+      fallbackInterval = setInterval(async () => {
+        try {
+          const response = await fetch("/api/status", { cache: "no-store" });
+          if (response.ok) {
+            const data = await response.json();
+            updateDisplay(data);
+          } else {
+            throw new Error(`HTTP ${response.status}`);
+          }
+        } catch (error) {
+          console.error("Polling error:", error);
+          if (isConnected) {
+            isConnected = false;
+            // Could add status indicators here if needed
+          }
+        }
+      }, refreshRate);
+    }
+    
+    // Enhanced error handling for network issues
+    window.addEventListener('online', function() {
+      console.log("Network back online");
+      if (!wsConnection && useWebSocket) {
+        connectWebSocket();
+      }
+    });
+    
+    window.addEventListener('offline', function() {
+      console.log("Network offline");
+      if (wsConnection) {
+        wsConnection.close();
+        wsConnection = null;
+      }
+    });
+    
+    // Initialize display
+    function initialize() {
+      // Start connection
+      if (useWebSocket) {
+        connectWebSocket();
+        // Also start fallback as backup
+        setTimeout(startFallbackPolling, 5000);
+      } else {
+        startFallbackPolling();
+      }
+      
+      // Initial load
+      startFallbackPolling();
+    }
+    
+    // Start when page loads
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initialize);
+    } else {
+      initialize();
+    }
+    
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', function() {
+      if (wsConnection) {
+        wsConnection.close();
+      }
+      if (fallbackInterval) {
+        clearInterval(fallbackInterval);
+      }
+    });
+  </script>
+</body>
+</html>

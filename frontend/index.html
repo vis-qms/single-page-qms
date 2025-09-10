@@ -1,0 +1,1059 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VIS-QMS — Enhanced Configuration</title>
+  <style>
+    /* Enhanced styling matching the main FastAPI QMS app */
+    body { 
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      margin: 0; 
+      background: #0A1222; 
+      color: #EAF2FF; 
+      line-height: 1.5;
+    }
+    header { 
+      padding: 16px 20px; 
+      border-bottom: 1px solid #2E3A52; 
+      display: flex; 
+      align-items: center; 
+      gap: 12px;
+      background: #0E1420;
+    }
+    main { 
+      padding: 16px 20px; 
+      display: grid; 
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); 
+      gap: 18px; 
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    h1 { 
+      font-size: 18px; 
+      margin: 0;
+      color: #9CC2FF;
+    }
+    h2 { 
+      margin: 0 0 8px 0; 
+      font-weight: 600; 
+      color: #EAF2FF;
+      font-size: 16px;
+    }
+    .card { 
+      background: #0E1420; 
+      border: 1px solid #2E3A52; 
+      border-radius: 14px; 
+      padding: 14px; 
+      transition: border-color 0.2s ease;
+    }
+    .card:hover {
+      border-color: #4A5568;
+    }
+    label { 
+      display: block; 
+      font-size: 13px; 
+      margin-top: 8px; 
+      color: #B9C0CC;
+      font-weight: 500;
+    }
+    input, select, textarea { 
+      width: 100%; 
+      background: #0A1222; 
+      color: #EAF2FF; 
+      border: 1px solid #2E3A52; 
+      border-radius: 10px; 
+      padding: 8px; 
+      margin-top: 6px;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: #9CC2FF;
+      box-shadow: 0 0 0 2px rgba(156, 194, 255, 0.1);
+    }
+    .row { 
+      display: grid; 
+      grid-template-columns: 1fr 1fr; 
+      gap: 12px; 
+    }
+    .row-3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+    }
+    button { 
+      background: #1f77b4; 
+      color: white; 
+      border: 0; 
+      padding: 10px 14px; 
+      border-radius: 10px; 
+      cursor: pointer; 
+      font-weight: 500;
+      transition: background-color 0.2s ease, transform 0.1s ease;
+    }
+    button:hover {
+      background: #1565C0;
+      transform: translateY(-1px);
+    }
+    button:active {
+      transform: translateY(0);
+    }
+    .btn-danger {
+      background: #b41f1f;
+    }
+    .btn-danger:hover {
+      background: #d32f2f;
+    }
+    .btn-success {
+      background: #2e7d32;
+    }
+    .btn-success:hover {
+      background: #388e3c;
+    }
+    .toolbar { 
+      display: flex; 
+      gap: 10px; 
+      align-items: center; 
+      flex-wrap: wrap;
+    }
+    .preview { 
+      height: 320px; 
+      border-radius: 12px; 
+      overflow: hidden; 
+      border: 1px solid #2E3A52; 
+      position: relative;
+      background: #000;
+    }
+    .muted { 
+      color: #9CC2FF; 
+      font-size: 12px; 
+      margin-top: 4px;
+    }
+    .status-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .status-badge.connected {
+      background: rgba(76, 255, 143, 0.2);
+      color: #4cff8f;
+    }
+    .status-badge.disconnected {
+      background: rgba(255, 107, 107, 0.2);
+      color: #ff6b6b;
+    }
+    .status-badge.running {
+      background: rgba(156, 194, 255, 0.2);
+      color: #9CC2FF;
+    }
+    .status-badge.stopped {
+      background: rgba(185, 192, 204, 0.2);
+      color: #B9C0CC;
+    }
+    .metric {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid #2E3A52;
+    }
+    .metric:last-child {
+      border-bottom: none;
+    }
+    .metric-value {
+      font-weight: 600;
+      color: #9CC2FF;
+    }
+    .advanced-section {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid #2E3A52;
+    }
+    .toggle-section {
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .toggle-section:hover {
+      color: #9CC2FF;
+    }
+    .toggle-arrow {
+      transition: transform 0.2s ease;
+    }
+    .toggle-arrow.expanded {
+      transform: rotate(90deg);
+    }
+    .collapsible {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease;
+    }
+    .collapsible.expanded {
+      max-height: 1000px;
+    }
+    
+    /* Responsive design */
+    @media (max-width: 768px) {
+      main {
+        grid-template-columns: 1fr;
+        padding: 12px;
+      }
+      .row, .row-3 {
+        grid-template-columns: 1fr;
+      }
+      .toolbar {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .toolbar > * {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>📹 VIS-QMS — Enhanced Configuration</h1>
+    <div class="toolbar">
+      <button id="startBtn" class="btn-success">Start Detection</button>
+      <button id="stopBtn" class="btn-danger">Stop Detection</button>
+      <button id="save" class="btn-primary">Save Config</button>
+      <button id="saveToFile" class="btn-secondary">Save to File</button>
+      <button id="loadFromFile" class="btn-secondary">Load from File</button>
+      <a href="/display?ws=true&refresh=500" target="_blank" style="color:#9CC2FF;text-decoration:none;">🖥️ Open Display</a>
+      <span id="saveStatus" class="muted"></span>
+    </div>
+  </header>
+  
+  <main>
+    <!-- Gate Configuration -->
+    <section class="card">
+      <h2>Gate Configuration</h2>
+      <div class="row">
+        <div><label>Gate ID<input id="gate_id" placeholder="GATE-01" /></label></div>
+        <div><label>Gate Name<input id="gate_name" placeholder="GATE" /></label></div>
+      </div>
+      <div class="row">
+        <div><label>Gate Number<input id="gate_number" placeholder="01" /></label></div>
+        <div><label>Image Quality
+          <select id="image_quality">
+            <option value="High (Sharp)">High (Sharp)</option>
+            <option value="Medium (Balanced)" selected>Medium (Balanced)</option>
+            <option value="Low (Fast)">Low (Fast)</option>
+          </select></label></div>
+      </div>
+    </section>
+
+    <!-- Live Status -->
+    <section class="card">
+      <h2>Live Status & Metrics</h2>
+      <div class="metric">
+        <span>Connection Status</span>
+        <span id="connectionStatus" class="status-badge disconnected">Disconnected</span>
+      </div>
+      <div class="metric">
+        <span>Detection Status</span>
+        <span id="detectionStatus" class="status-badge stopped">Stopped</span>
+      </div>
+      <div class="metric">
+        <span>People in Queue</span>
+        <span id="livePeople" class="metric-value">0</span>
+      </div>
+      <div class="metric">
+        <span>Wait Time</span>
+        <span id="liveWait" class="metric-value">0 min</span>
+      </div>
+      <div class="metric">
+        <span>Total Detections</span>
+        <span id="totalDetections" class="metric-value">0</span>
+      </div>
+      <div class="metric">
+        <span>Avg Inference Time</span>
+        <span id="avgInference" class="metric-value">0 ms</span>
+      </div>
+      <div class="muted">Updates every 0.5s from live API</div>
+    </section>
+
+    <!-- Live Preview -->
+    <section class="card">
+      <h2>Live Preview & Polygon Editor</h2>
+      <div class="preview">
+        <div style="position:relative;width:100%;height:100%;">
+          <img id="previewImg" src="/preview.mjpg?mode=direct&fps=20&q=70&width=960" 
+               style="width:100%;height:100%;object-fit:cover;display:block;" 
+               alt="Camera Preview" />
+          <canvas id="polyCanvas" style="position:absolute;left:0;top:0;width:100%;height:100%;"></canvas>
+        </div>
+      </div>
+      <div class="muted" style="margin-top:8px;">
+        Live stream for cropping & visual checks. 
+        <strong>Click to add polygon points, drag to move them.</strong>
+      </div>
+    </section>
+
+    <!-- Camera Connection -->
+    <section class="card">
+      <h2>Camera Connection</h2>
+      <label>Connection Type
+        <select id="connection_type">
+          <option value="Webcam">Webcam</option>
+          <option value="NVR">NVR</option>
+          <option value="Direct Camera">Direct Camera</option>
+          <option value="HTTP Stream">HTTP Stream</option>
+          <option value="Custom URL">Custom URL</option>
+        </select>
+      </label>
+      
+      <div id="webcamFields">
+        <label>Webcam Index <input type="number" id="webcam_index" value="0" min="0"/></label>
+      </div>
+      
+      <div id="nvrFields" style="display:none;">
+        <div class="row">
+          <div><label>IP Address <input id="ip_address" placeholder="192.168.1.100"/></label></div>
+          <div><label>Port <input type="number" id="port" value="554" min="1" max="65535"/></label></div>
+        </div>
+        <div class="row">
+          <div><label>Username <input id="username" placeholder="admin"/></label></div>
+          <div><label>Password <input id="password" type="password" placeholder="password"/></label></div>
+        </div>
+        <div class="row">
+          <div><label>Channel <input type="number" id="channel" value="1" min="1"/></label></div>
+          <div><label>Stream Quality
+            <select id="stream_quality">
+              <option value="sub">Sub Stream (Fast)</option>
+              <option value="main">Main Stream (Quality)</option>
+            </select></label></div>
+        </div>
+        <label>Camera Brand
+          <select id="camera_brand">
+            <option value="Generic">Generic</option>
+            <option value="Pelco">Pelco</option>
+            <option value="Hikvision">Hikvision</option>
+            <option value="Dahua">Dahua</option>
+            <option value="Axis">Axis</option>
+          </select>
+        </label>
+      </div>
+      
+      <div id="urlFields" style="display:none;">
+        <label>Custom RTSP/HTTP URL 
+          <input id="custom_url" placeholder="rtsp://username:password@192.168.1.100:554/cam/realmonitor?channel=1&subtype=0"/>
+        </label>
+      </div>
+    </section>
+
+    <!-- Detection Models -->
+    <section class="card">
+      <h2>Detection Models & Parameters</h2>
+      <div class="row">
+        <div><label>Model
+          <select id="selected_model">
+            <option value="YOLOv12x">YOLOv12x (SOTA)</option>
+            <option value="YOLOv12l">YOLOv12l (Balanced)</option>
+            <option value="YOLOv11x" selected>YOLOv11x (Recommended)</option>
+            <option value="YOLOv11l">YOLOv11l (Fast)</option>
+            <option value="YOLOv10x">YOLOv10x (High Precision)</option>
+            <option value="YOLOv9e">YOLOv9e (GELAN)</option>
+            <option value="YOLOv8x">YOLOv8x (Classic)</option>
+            <option value="YOLOv8m">YOLOv8m (Medium)</option>
+            <option value="RT-DETR-X">RT-DETR-X (Transformer)</option>
+            <option value="DETR-HF">DETR ResNet-50 (HF)</option>
+          </select></label></div>
+        <div><label>Confidence Threshold 
+          <input type="number" step="0.01" min="0.1" max="0.95" id="confidence_threshold" value="0.5"/>
+        </label></div>
+      </div>
+      <div class="row">
+        <div><label>Image Size (imgsz) 
+          <input type="number" id="imgsz" value="1280" step="32" min="320" max="2048"/>
+        </label></div>
+        <div><label>Half Precision (FP16)
+          <select id="half_precision">
+            <option value="false">Disabled (Compatible)</option>
+            <option value="true">Enabled (CUDA Only)</option>
+          </select></label></div>
+      </div>
+      <div class="row">
+        <div><label>Frame Read FPS 
+          <input type="number" id="frame_read_fps" value="30" min="1" max="60"/>
+        </label></div>
+        <div><label>Detection Interval (s) 
+          <input type="number" step="0.1" min="0.1" max="10" id="detection_interval" value="1.0"/>
+        </label></div>
+      </div>
+      
+      <!-- Advanced Detection Options -->
+      <div class="advanced-section">
+        <div class="toggle-section" onclick="toggleSection('advancedDetection')">
+          <span class="toggle-arrow" id="advancedDetectionArrow">▶</span>
+          <strong>Advanced Detection Options</strong>
+        </div>
+        <div id="advancedDetection" class="collapsible">
+          <div class="row">
+            <div><label>Use TTA (Test-Time Augmentation)
+              <select id="use_tta">
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
+              </select></label></div>
+            <div><label>Max Detections
+              <input type="number" id="max_det" value="100" min="10" max="1000"/>
+            </label></div>
+          </div>
+          <div class="row">
+            <div><label>Secondary IoU Threshold
+              <input type="number" step="0.01" min="0.1" max="0.95" id="secondary_iou" value="0.70"/>
+            </label></div>
+            <div><label>People Adjustment
+              <input type="number" id="people_adjustment" value="-1" min="-10" max="10"/>
+            </label></div>
+          </div>
+          <div class="row">
+            <div><label>Min Height Ratio
+              <input type="number" step="0.001" min="0.001" max="0.1" id="min_height_ratio" value="0.018"/>
+            </label></div>
+            <div><label>Min Area Ratio
+              <input type="number" step="0.00001" min="0.00001" max="0.01" id="min_area_ratio" value="0.00015"/>
+            </label></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Cropping & ROI -->
+    <section class="card">
+      <h2>Cropping & Region of Interest</h2>
+      <div class="row">
+        <div><label>Enable Rectangle Cropping
+          <select id="enable_cropping">
+            <option value="false">Disabled</option>
+            <option value="true">Enabled</option>
+          </select></label></div>
+        <div><label>Enable Polygon Cropping
+          <select id="poly_enabled">
+            <option value="false">Disabled</option>
+            <option value="true">Enabled</option>
+          </select></label></div>
+      </div>
+      
+      <div id="rectangleCropping">
+        <h3 style="font-size: 14px; margin: 12px 0 8px 0;">Rectangle Crop Bounds (%)</h3>
+        <div class="row">
+          <div><label>Left <input type="number" id="crop_left" value="0" min="0" max="100"/></label></div>
+          <div><label>Top <input type="number" id="crop_top" value="0" min="0" max="100"/></label></div>
+        </div>
+        <div class="row">
+          <div><label>Right <input type="number" id="crop_right" value="100" min="0" max="100"/></label></div>
+          <div><label>Bottom <input type="number" id="crop_bottom" value="100" min="0" max="100"/></label></div>
+        </div>
+      </div>
+      
+      <div id="polygonCropping">
+        <h3 style="font-size: 14px; margin: 12px 0 8px 0;">Polygon Points (Normalized 0-1)</h3>
+        <label>Polygon Points JSON 
+          <textarea id="poly_points" style="height:80px;" placeholder='[{"x":0.0,"y":0.0},{"x":1.0,"y":0.0},{"x":1.0,"y":1.0},{"x":0.0,"y":1.0}]'></textarea>
+        </label>
+        <div class="muted">Click on preview to add points, drag to move them</div>
+      </div>
+    </section>
+  
+    <!-- Tracking & Stabilization -->
+    <section class="card">
+      <h2>Tracking & Count Stabilization</h2>
+      <div class="row">
+        <div><label>Tracking Enabled
+          <select id="tracker_enabled">
+            <option value="false">Disabled</option>
+            <option value="true">Enabled</option>
+          </select></label></div>
+        <div><label>Tracker TTL (frames)
+          <input type="number" id="tracker_ttl" value="2" min="1" max="10"/>
+        </label></div>
+      </div>
+      <div class="row">
+        <div><label>Tracker IoU Threshold
+          <input type="number" step="0.01" min="0.1" max="0.9" id="tracker_iou" value="0.40"/>
+        </label></div>
+        <div></div>
+      </div>
+      
+      <h3 style="font-size: 14px; margin: 12px 0 8px 0;">Count Stabilization</h3>
+      <div class="row">
+        <div><label>Stabilization Method
+          <select id="stab_method">
+            <option value="EMA" selected>EMA (Exponential Moving Average)</option>
+            <option value="Rolling">Rolling Average</option>
+          </select></label></div>
+        <div><label>EMA Alpha
+          <input type="number" step="0.01" min="0.1" max="1.0" id="ema_alpha" value="0.65"/>
+        </label></div>
+      </div>
+      <div class="row">
+        <div><label>Rolling Window Frames
+          <input type="number" id="avg_window_frames" value="3" min="1" max="20"/>
+        </label></div>
+        <div><label>Max Δ per Detection
+          <input type="number" id="max_delta_per_detection" value="1" min="0" max="10"/>
+        </label></div>
+      </div>
+    </section>
+
+    <!-- Wait Time Calculation -->
+    <section class="card">
+      <h2>Wait Time Calculation</h2>
+      <div class="row">
+        <div><label>Min Time per Person (s)
+          <input type="number" id="per_person_time_min" value="22" min="5" max="120"/>
+        </label></div>
+        <div><label>Max Time per Person (s)
+          <input type="number" id="per_person_time_max" value="26" min="5" max="120"/>
+        </label></div>
+      </div>
+      <div class="muted">Random time per person is calculated between min and max values</div>
+    </section>
+
+    <!-- Display Configuration -->
+    <section class="card">
+      <h2>Display Configuration</h2>
+      <div class="row">
+        <div><label>Theme
+          <select id="theme_option">
+            <option value="Dark (Airport Standard)" selected>Dark (Airport Standard)</option>
+            <option value="Light (Bright)">Light (Bright)</option>
+            <option value="High Contrast">High Contrast</option>
+          </select></label></div>
+        <div><label>Font Size Multiplier
+          <input type="number" step="0.1" min="0.5" max="3.0" id="font_size_multiplier" value="1.0"/>
+        </label></div>
+      </div>
+      <div class="row">
+        <div><label>Accent Color
+          <input type="color" id="accent_color" value="#1f77b4"/>
+        </label></div>
+        <div><label>People Count Color
+          <input type="color" id="people_count_color" value="#1f77b4"/>
+        </label></div>
+      </div>
+      <div class="row">
+        <div><label>Brightness Level
+          <input type="number" step="0.1" min="0.1" max="2.0" id="brightness_level" value="1.0"/>
+        </label></div>
+        <div><label>Contrast Level
+          <input type="number" step="0.1" min="0.1" max="2.0" id="contrast_level" value="1.0"/>
+        </label></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // Enhanced JavaScript with all features
+    const $ = (id) => document.getElementById(id);
+    
+    // Toggle collapsible sections
+    function toggleSection(sectionId) {
+      const section = $(sectionId);
+      const arrow = $(sectionId + 'Arrow');
+      
+      if (section.classList.contains('expanded')) {
+        section.classList.remove('expanded');
+        arrow.classList.remove('expanded');
+      } else {
+        section.classList.add('expanded');
+        arrow.classList.add('expanded');
+      }
+    }
+    
+    // Connection type field visibility
+    function showConnFields() {
+      const type = $("connection_type").value;
+      $("webcamFields").style.display = (type === "Webcam") ? "block" : "none";
+      $("nvrFields").style.display = (type === "NVR" || type === "Direct Camera" || type === "HTTP Stream") ? "block" : "none";
+      $("urlFields").style.display = (type === "Custom URL") ? "block" : "none";
+    }
+    $("connection_type").addEventListener("change", showConnFields);
+
+    // Polygon editor functionality
+    const canvas = document.getElementById("polyCanvas");
+    const imgEl = document.getElementById("previewImg");
+    let polyPoints = [];
+    let draggingIdx = -1;
+
+    function loadPolyFromTextarea() {
+      try {
+        const text = $("poly_points").value || "[]";
+        polyPoints = JSON.parse(text);
+        if (!Array.isArray(polyPoints)) polyPoints = [];
+        // Convert any percentage values to normalized values
+        polyPoints = polyPoints.map(p => ({
+          x: Math.max(0, Math.min(1, (p.x > 1 ? p.x / 100 : p.x))),
+          y: Math.max(0, Math.min(1, (p.y > 1 ? p.y / 100 : p.y)))
+        }));
+      } catch(e) { 
+        polyPoints = []; 
+      }
+      drawPoly();
+    }
+
+    function normToPx(pt) {
+      const rect = canvas.getBoundingClientRect();
+      return { x: pt.x * rect.width, y: pt.y * rect.height };
+    }
+
+    function pxToNorm(x, y) {
+      const rect = canvas.getBoundingClientRect();
+      return { 
+        x: Math.max(0, Math.min(1, x / rect.width)), 
+        y: Math.max(0, Math.min(1, y / rect.height)) 
+      };
+    }
+
+    function drawPoly() {
+      const ctx = canvas.getContext("2d");
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * devicePixelRatio;
+      canvas.height = rect.height * devicePixelRatio;
+      ctx.scale(devicePixelRatio, devicePixelRatio);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      
+      if ($("poly_enabled").value === "true" && polyPoints.length >= 3) {
+        // Draw semi-transparent overlay outside polygon
+        ctx.fillStyle = "rgba(0,0,0,0.4)";
+        ctx.fillRect(0, 0, rect.width, rect.height);
+        
+        ctx.save();
+        ctx.globalCompositeOperation = "destination-out";
+        ctx.beginPath();
+        polyPoints.forEach((p, i) => {
+          const {x, y} = normToPx(p);
+          if (i === 0) ctx.moveTo(x, y); 
+          else ctx.lineTo(x, y);
+        });
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+      
+      if (polyPoints.length) {
+        // Draw polygon outline
+        ctx.strokeStyle = "#9CC2FF";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        polyPoints.forEach((p, i) => {
+          const {x, y} = normToPx(p);
+          if (i === 0) ctx.moveTo(x, y); 
+          else ctx.lineTo(x, y);
+        });
+        if (polyPoints.length >= 3) ctx.closePath();
+        ctx.stroke();
+        
+        // Draw control points
+        ctx.fillStyle = "#1f77b4";
+        polyPoints.forEach(p => {
+          const {x, y} = normToPx(p);
+          ctx.beginPath();
+          ctx.arc(x, y, 6, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+    }
+
+    function nearestPointIdx(x, y) {
+      let best = -1, bestDist = 15;
+      polyPoints.forEach((p, i) => {
+        const pt = normToPx(p);
+        const dist = Math.hypot(pt.x - x, pt.y - y);
+        if (dist < bestDist) {
+          best = i;
+          bestDist = dist;
+        }
+      });
+      return best;
+    }
+
+    // Canvas mouse events
+    canvas.addEventListener("mousedown", (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      
+      const idx = nearestPointIdx(x, y);
+      if (idx >= 0) {
+        draggingIdx = idx;
+        return;
+      }
+      
+      // Add new point
+      const norm = pxToNorm(x, y);
+      polyPoints.push(norm);
+      $("poly_points").value = JSON.stringify(polyPoints, null, 2);
+      drawPoly();
+      autosavePolygonDebounced();
+    });
+
+    canvas.addEventListener("mousemove", (e) => {
+      if (draggingIdx < 0) return;
+      
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      
+      polyPoints[draggingIdx] = pxToNorm(x, y);
+      $("poly_points").value = JSON.stringify(polyPoints, null, 2);
+      drawPoly();
+    });
+
+    canvas.addEventListener("dblclick", (e) => {
+      // Double-click to remove point
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      
+      const idx = nearestPointIdx(x, y);
+      if (idx >= 0 && polyPoints.length > 3) {
+        polyPoints.splice(idx, 1);
+        $("poly_points").value = JSON.stringify(polyPoints, null, 2);
+        drawPoly();
+        autosavePolygonDebounced();
+      }
+    });
+
+    window.addEventListener("mouseup", () => {
+      if (draggingIdx >= 0) {
+        draggingIdx = -1;
+        autosavePolygonDebounced();
+      }
+    });
+
+    // Resize observer for canvas
+    new ResizeObserver(() => drawPoly()).observe(canvas);
+
+    // Polygon event listeners
+    $("poly_enabled").addEventListener("change", () => {
+      drawPoly();
+      autosavePolygonDebounced();
+    });
+    $("poly_points").addEventListener("input", () => {
+      loadPolyFromTextarea();
+      autosavePolygonDebounced();
+    });
+
+    // Debounce utility
+    function debounce(fn, ms) {
+      let timeout;
+      return (...args) => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => fn(...args), ms);
+      };
+    }
+
+    // Auto-save polygon changes
+    async function autosavePolygon() {
+      try {
+        const cfg = await getCurrentConfig();
+        cfg.polygon_cropping = cfg.polygon_cropping || {};
+        cfg.polygon_cropping.enabled = ($("poly_enabled").value === "true");
+        try {
+          cfg.polygon_cropping.points = JSON.parse($("poly_points").value || "[]");
+        } catch(e) {
+          cfg.polygon_cropping.points = [];
+        }
+        
+        await fetch("/api/config", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(cfg)
+        });
+      } catch(e) {
+        console.error("Auto-save failed:", e);
+      }
+    }
+    const autosavePolygonDebounced = debounce(autosavePolygon, 500);
+
+    // Get current config from server
+    async function getCurrentConfig() {
+      const response = await fetch("/api/config");
+      return await response.json();
+    }
+
+    // Live status updates
+    async function updateLiveStatus() {
+      try {
+        const response = await fetch("/api/status", { cache: "no-store" });
+        if (response.ok) {
+          const status = await response.json();
+          
+          // Update connection status
+          const connStatus = $("connectionStatus");
+          connStatus.textContent = status.connected ? "Connected" : "Disconnected";
+          connStatus.className = `status-badge ${status.connected ? 'connected' : 'disconnected'}`;
+          
+          // Update detection status
+          const detStatus = $("detectionStatus");
+          detStatus.textContent = status.running ? "Running" : "Stopped";
+          detStatus.className = `status-badge ${status.running ? 'running' : 'stopped'}`;
+          
+          // Update metrics
+          $("livePeople").textContent = status.people_count || 0;
+          const waitMin = Math.round((status.wait_time || 0) / 60);
+          $("liveWait").textContent = waitMin > 0 ? `${waitMin} min` : "No wait";
+          $("totalDetections").textContent = status.total_detections || 0;
+          $("avgInference").textContent = `${Math.round((status.average_inference_time || 0) * 1000)} ms`;
+        }
+      } catch(e) {
+        console.error("Status update failed:", e);
+      }
+    }
+
+    // Configuration management
+    async function loadConfig() {
+      try {
+        const cfg = await getCurrentConfig();
+        
+        // Basic settings
+        $("gate_id").value = cfg.gate_id || "GATE-01";
+        $("gate_name").value = cfg.gate_name || "GATE";
+        $("gate_number").value = cfg.gate_number || "01";
+        $("image_quality").value = cfg.runtime?.image_quality || "Medium (Balanced)";
+        
+        // Connection settings
+        $("connection_type").value = cfg.connection?.connection_type || "Webcam";
+        showConnFields();
+        $("webcam_index").value = cfg.connection?.webcam_index ?? 0;
+        $("ip_address").value = cfg.connection?.ip_address || "";
+        $("port").value = cfg.connection?.port ?? 554;
+        $("username").value = cfg.connection?.username || "";
+        $("password").value = cfg.connection?.password || "";
+        $("channel").value = cfg.connection?.channel ?? 1;
+        $("stream_quality").value = cfg.connection?.stream_quality || "sub";
+        $("camera_brand").value = cfg.connection?.camera_brand || "Generic";
+        $("custom_url").value = cfg.connection?.custom_url || "";
+        
+        // Detection settings
+        $("selected_model").value = cfg.runtime?.selected_model || "YOLOv11x";
+        $("confidence_threshold").value = cfg.runtime?.confidence_threshold ?? 0.5;
+        $("imgsz").value = cfg.runtime?.imgsz ?? 1280;
+        $("half_precision").value = String(cfg.runtime?.half_precision ?? false);
+        $("frame_read_fps").value = cfg.runtime?.frame_read_fps ?? 30;
+        $("detection_interval").value = cfg.runtime?.detection_interval ?? 1.0;
+        
+        // Advanced detection
+        $("use_tta").value = String(cfg.runtime?.use_tta ?? false);
+        $("max_det").value = cfg.runtime?.max_det ?? 100;
+        $("secondary_iou").value = cfg.runtime?.secondary_iou ?? 0.70;
+        $("people_adjustment").value = cfg.runtime?.people_adjustment ?? -1;
+        $("min_height_ratio").value = cfg.runtime?.min_height_ratio ?? 0.018;
+        $("min_area_ratio").value = cfg.runtime?.min_area_ratio ?? 0.00015;
+        
+        // Cropping
+        $("enable_cropping").value = String(cfg.runtime?.enable_cropping ?? false);
+        $("crop_left").value = cfg.runtime?.crop_left ?? 0;
+        $("crop_top").value = cfg.runtime?.crop_top ?? 0;
+        $("crop_right").value = cfg.runtime?.crop_right ?? 100;
+        $("crop_bottom").value = cfg.runtime?.crop_bottom ?? 100;
+        
+        // Polygon cropping
+        $("poly_enabled").value = String(cfg.polygon_cropping?.enabled ?? false);
+        $("poly_points").value = JSON.stringify(cfg.polygon_cropping?.points || [], null, 2);
+        loadPolyFromTextarea();
+        
+        // Tracking
+        $("tracker_enabled").value = String(cfg.tracker?.enabled ?? false);
+        $("tracker_ttl").value = cfg.tracker?.ttl ?? 2;
+        $("tracker_iou").value = cfg.tracker?.iou_thr ?? 0.40;
+        
+        // Stabilization
+        $("stab_method").value = cfg.count_stabilization?.method || "EMA";
+        $("ema_alpha").value = cfg.count_stabilization?.ema_alpha ?? 0.65;
+        $("avg_window_frames").value = cfg.count_stabilization?.avg_window_frames ?? 3;
+        $("max_delta_per_detection").value = cfg.count_stabilization?.max_delta_per_detection ?? 1;
+        
+        // Wait time
+        $("per_person_time_min").value = cfg.runtime?.per_person_time_min ?? 22;
+        $("per_person_time_max").value = cfg.runtime?.per_person_time_max ?? 26;
+        
+        // Display config
+        const display = cfg.display_config || {};
+        $("theme_option").value = display.theme_option || "Dark (Airport Standard)";
+        $("font_size_multiplier").value = display.font_size_multiplier ?? 1.0;
+        $("accent_color").value = display.accent_color || "#1f77b4";
+        $("people_count_color").value = display.people_count_color || "#1f77b4";
+        $("brightness_level").value = display.brightness_level ?? 1.0;
+        $("contrast_level").value = display.contrast_level ?? 1.0;
+        
+      } catch(e) {
+        console.error("Failed to load config:", e);
+        showStatus("Failed to load configuration", false);
+      }
+    }
+
+    async function saveConfig() {
+      try {
+        const cfg = {
+          gate_id: $("gate_id").value,
+          gate_name: $("gate_name").value,
+          gate_number: $("gate_number").value,
+          
+          connection: {
+            connection_type: $("connection_type").value,
+            ip_address: $("ip_address").value,
+            port: Number($("port").value),
+            username: $("username").value,
+            password: $("password").value,
+            channel: Number($("channel").value),
+            stream_quality: $("stream_quality").value,
+            camera_brand: $("camera_brand").value,
+            custom_url: $("custom_url").value,
+            webcam_index: Number($("webcam_index").value)
+          },
+          
+          runtime: {
+            frame_read_fps: Number($("frame_read_fps").value),
+            detection_interval: Math.max(0.1, Math.min(10.0, Number($("detection_interval").value))),
+            half_precision: $("half_precision").value === "true",
+            image_quality: $("image_quality").value,
+            confidence_threshold: Number($("confidence_threshold").value),
+            imgsz: Number($("imgsz").value),
+            enable_cropping: $("enable_cropping").value === "true",
+            crop_left: Number($("crop_left").value),
+            crop_top: Number($("crop_top").value),
+            crop_right: Number($("crop_right").value),
+            crop_bottom: Number($("crop_bottom").value),
+            per_person_time_min: Number($("per_person_time_min").value),
+            per_person_time_max: Number($("per_person_time_max").value),
+            people_adjustment: Number($("people_adjustment").value),
+            selected_model: $("selected_model").value,
+            use_tta: $("use_tta").value === "true",
+            max_det: Number($("max_det").value),
+            secondary_iou: Number($("secondary_iou").value),
+            min_height_ratio: Number($("min_height_ratio").value),
+            min_area_ratio: Number($("min_area_ratio").value)
+          },
+          
+          tracker: {
+            enabled: $("tracker_enabled").value === "true",
+            ttl: Number($("tracker_ttl").value),
+            iou_thr: Number($("tracker_iou").value)
+          },
+          
+          count_stabilization: {
+            method: $("stab_method").value,
+            avg_window_frames: Number($("avg_window_frames").value),
+            ema_alpha: Number($("ema_alpha").value),
+            max_delta_per_detection: Number($("max_delta_per_detection").value)
+          },
+          
+          polygon_cropping: {
+            enabled: $("poly_enabled").value === "true",
+            points_count: 4,
+            points: JSON.parse($("poly_points").value || "[]")
+          },
+          
+          display_config: {
+            theme_option: $("theme_option").value,
+            font_size_multiplier: Number($("font_size_multiplier").value),
+            accent_color: $("accent_color").value,
+            people_count_color: $("people_count_color").value,
+            brightness_level: Number($("brightness_level").value),
+            contrast_level: Number($("contrast_level").value)
+          }
+        };
+        
+        const response = await fetch("/api/config", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(cfg)
+        });
+        
+        const result = await response.json();
+        showStatus(result.ok ? "Configuration saved ✓" : "Save failed", result.ok);
+        
+      } catch(e) {
+        console.error("Save failed:", e);
+        showStatus("Save failed", false);
+      }
+    }
+
+    async function saveToFile() {
+      try {
+        const response = await fetch("/api/config/save", { method: "POST" });
+        const result = await response.json();
+        showStatus(result.ok ? `Saved to ${result.file} ✓` : `Save failed: ${result.error}`, result.ok);
+      } catch(e) {
+        showStatus("Save to file failed", false);
+      }
+    }
+
+    async function loadFromFile() {
+      try {
+        const gateId = $("gate_id").value || "GATE-01";
+        const response = await fetch(`/api/config/load?gate_id=${gateId}`);
+        const result = await response.json();
+        
+        if (result.ok) {
+          // Apply loaded config
+          await fetch("/api/config", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(result.config)
+          });
+          
+          // Reload UI
+          await loadConfig();
+          showStatus("Configuration loaded from file ✓", true);
+        } else {
+          showStatus(`Load failed: ${result.error}`, false);
+        }
+      } catch(e) {
+        showStatus("Load from file failed", false);
+      }
+    }
+
+    // Control functions
+    async function startDetection() {
+      try {
+        await fetch("/api/start", { method: "POST" });
+        showStatus("Detection started ✓", true);
+      } catch(e) {
+        showStatus("Start failed", false);
+      }
+    }
+
+    async function stopDetection() {
+      try {
+        await fetch("/api/stop", { method: "POST" });
+        showStatus("Detection stopped ✓", true);
+      } catch(e) {
+        showStatus("Stop failed", false);
+      }
+    }
+
+    function showStatus(message, success) {
+      const status = $("saveStatus");
+      status.textContent = message;
+      status.style.color = success ? "#4cff8f" : "#ff6b6b";
+      setTimeout(() => {
+        status.textContent = "";
+        status.style.color = "";
+      }, 3000);
+    }
+
+    // Event listeners
+    $("save").addEventListener("click", saveConfig);
+    $("saveToFile").addEventListener("click", saveToFile);
+    $("loadFromFile").addEventListener("click", loadFromFile);
+    $("startBtn").addEventListener("click", startDetection);
+    $("stopBtn").addEventListener("click", stopDetection);
+
+    // Initialize
+    loadConfig();
+    updateLiveStatus();
+    setInterval(updateLiveStatus, 500);
+  </script>
+</body>
+</html>
