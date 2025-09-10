@@ -434,6 +434,7 @@ class SharedState:
         half = bool(runtime.get("half_precision", False))
         use_tta = bool(runtime.get("use_tta", False))
         max_det = int(runtime.get("max_det", 100))
+        primary_iou = float(runtime.get("primary_iou", 0.68))
         secondary_iou = float(runtime.get("secondary_iou", 0.70))
         min_height_ratio = float(runtime.get("min_height_ratio", 0.018))
         min_area_ratio = float(runtime.get("min_area_ratio", 0.00015))
@@ -476,6 +477,7 @@ class SharedState:
                 source=frame, 
                 imgsz=imgsz, 
                 conf=conf, 
+                iou=primary_iou,  # Primary IoU for model's NMS
                 half=half, 
                 verbose=False,
                 classes=[0],  # person only
@@ -712,8 +714,9 @@ class SharedState:
             self._frame_capture = cap
             self.connected = cap is not None and cap.isOpened()
             
-            # Optimized frame capture loop (30 FPS like legacy QMS)
-            target_fps = 30
+            # Optimized frame capture loop - use FPS from config
+            cfg = self.get_config()
+            target_fps = int((cfg or {}).get("runtime", {}).get("frame_read_fps", 30))
             frame_interval = 1.0 / max(10, int(target_fps))
             
             while self.capture_running and cap and cap.isOpened():

@@ -130,7 +130,7 @@ def api_status():
 @app.get("/preview.mjpg")
 def mjpeg_preview(
     q: int = Query(75, ge=10, le=95),
-    fps: int = Query(20, ge=1, le=60),
+    fps: int = Query(None, ge=1, le=60),
     mode: str = Query("direct"),
     width: int = Query(960, ge=0, le=3840),
 ):
@@ -149,7 +149,9 @@ def mjpeg_preview(
 
     def gen_direct():
         """Preview using queue frames (like legacy QMS) or direct capture when needed"""
-        frame_interval = 1.0 / float(fps)
+        # Use config FPS if not provided in query parameter
+        actual_fps = fps if fps is not None else STATE.get_config().get("runtime", {}).get("frame_read_fps", 20)
+        frame_interval = 1.0 / float(actual_fps)
         next_t = time.time()
         
         # If detection is running, use queue frames
@@ -202,7 +204,9 @@ def mjpeg_preview(
 
     def gen_state():
         """State mode - use queue frames like direct mode"""
-        frame_interval = 1.0 / float(fps)
+        # Use config FPS if not provided in query parameter
+        actual_fps = fps if fps is not None else STATE.get_config().get("runtime", {}).get("frame_read_fps", 20)
+        frame_interval = 1.0 / float(actual_fps)
         next_t = time.time()
         
         while True:

@@ -407,12 +407,18 @@
             </label></div>
           </div>
           <div class="row">
+            <div><label>Primary IoU Threshold
+              <input type="number" step="0.01" min="0.1" max="0.95" id="primary_iou" value="0.68"/>
+            </label></div>
             <div><label>Secondary IoU Threshold
               <input type="number" step="0.01" min="0.1" max="0.95" id="secondary_iou" value="0.70"/>
             </label></div>
+          </div>
+          <div class="row">
             <div><label>People Adjustment
               <input type="number" id="people_adjustment" value="-1" min="-10" max="10"/>
             </label></div>
+            <div></div>
           </div>
           <div class="row">
             <div><label>Min Height Ratio
@@ -456,6 +462,19 @@
       
       <div id="polygonCropping">
         <h3 style="font-size: 14px; margin: 12px 0 8px 0;">Polygon Points (Normalized 0-1)</h3>
+        
+        <div class="row" style="margin-bottom: 12px;">
+          <div><label>Number of Points
+            <select id="polygon_points_count">
+              <option value="4">4 Points (Rectangle)</option>
+              <option value="5">5 Points (Pentagon)</option>
+              <option value="6">6 Points (Hexagon)</option>
+              <option value="7">7 Points (Heptagon)</option>
+              <option value="8">8 Points (Octagon)</option>
+            </select></label></div>
+          <div><button type="button" id="resetPolygonBtn" style="padding: 8px 16px; background: #1f77b4; color: white; border: none; border-radius: 4px; cursor: pointer;">🔄 Reset to Default</button></div>
+        </div>
+        
         <label>Polygon Points JSON 
           <textarea id="poly_points" style="height:80px;" placeholder='[{"x":0.0,"y":0.0},{"x":1.0,"y":0.0},{"x":1.0,"y":1.0},{"x":0.0,"y":1.0}]'></textarea>
         </label>
@@ -621,45 +640,48 @@
       ctx.scale(devicePixelRatio, devicePixelRatio);
       ctx.clearRect(0, 0, rect.width, rect.height);
       
-      if ($("poly_enabled").value === "true" && polyPoints.length >= 3) {
-        // Draw semi-transparent overlay outside polygon
-        ctx.fillStyle = "rgba(0,0,0,0.4)";
-        ctx.fillRect(0, 0, rect.width, rect.height);
-        
-        ctx.save();
-        ctx.globalCompositeOperation = "destination-out";
-        ctx.beginPath();
-        polyPoints.forEach((p, i) => {
-          const {x, y} = normToPx(p);
-          if (i === 0) ctx.moveTo(x, y); 
-          else ctx.lineTo(x, y);
-        });
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
-      }
-      
-      if (polyPoints.length) {
-        // Draw polygon outline
-        ctx.strokeStyle = "#9CC2FF";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        polyPoints.forEach((p, i) => {
-          const {x, y} = normToPx(p);
-          if (i === 0) ctx.moveTo(x, y); 
-          else ctx.lineTo(x, y);
-        });
-        if (polyPoints.length >= 3) ctx.closePath();
-        ctx.stroke();
-        
-        // Draw control points
-        ctx.fillStyle = "#1f77b4";
-        polyPoints.forEach(p => {
-          const {x, y} = normToPx(p);
+      // Only draw polygon if enabled
+      if ($("poly_enabled").value === "true") {
+        if (polyPoints.length >= 3) {
+          // Draw semi-transparent overlay outside polygon
+          ctx.fillStyle = "rgba(0,0,0,0.4)";
+          ctx.fillRect(0, 0, rect.width, rect.height);
+          
+          ctx.save();
+          ctx.globalCompositeOperation = "destination-out";
           ctx.beginPath();
-          ctx.arc(x, y, 6, 0, Math.PI * 2);
+          polyPoints.forEach((p, i) => {
+            const {x, y} = normToPx(p);
+            if (i === 0) ctx.moveTo(x, y); 
+            else ctx.lineTo(x, y);
+          });
+          ctx.closePath();
           ctx.fill();
-        });
+          ctx.restore();
+        }
+        
+        if (polyPoints.length) {
+          // Draw polygon outline
+          ctx.strokeStyle = "#9CC2FF";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          polyPoints.forEach((p, i) => {
+            const {x, y} = normToPx(p);
+            if (i === 0) ctx.moveTo(x, y); 
+            else ctx.lineTo(x, y);
+          });
+          if (polyPoints.length >= 3) ctx.closePath();
+          ctx.stroke();
+          
+          // Draw control points (cursors)
+          ctx.fillStyle = "#1f77b4";
+          polyPoints.forEach(p => {
+            const {x, y} = normToPx(p);
+            ctx.beginPath();
+            ctx.arc(x, y, 6, 0, Math.PI * 2);
+            ctx.fill();
+          });
+        }
       }
     }
 
@@ -678,6 +700,9 @@
 
     // Canvas mouse events
     canvas.addEventListener("mousedown", (e) => {
+      // Only handle mouse events if polygon cropping is enabled
+      if ($("poly_enabled").value !== "true") return;
+      
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
@@ -709,6 +734,9 @@
     });
 
     canvas.addEventListener("dblclick", (e) => {
+      // Only handle double-click if polygon cropping is enabled
+      if ($("poly_enabled").value !== "true") return;
+      
       // Double-click to remove point
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
@@ -728,6 +756,77 @@
         draggingIdx = -1;
         autosavePolygonDebounced();
       }
+    });
+
+    // Polygon point count management
+    function ensurePolygonPointsCount(targetCount) {
+      const currentCount = polyPoints.length;
+      const count = parseInt(targetCount);
+      
+      if (currentCount < count) {
+        // Add new points at center
+        for (let i = currentCount; i < count; i++) {
+          polyPoints.push({ x: 0.5, y: 0.5 });
+        }
+      } else if (currentCount > count) {
+        // Remove excess points
+        polyPoints = polyPoints.slice(0, count);
+      }
+      
+      updatePolygonTextarea();
+      drawPoly();
+    }
+
+    function resetPolygonToDefault() {
+      const count = parseInt($("polygon_points_count").value);
+      
+      if (count === 3) {
+        polyPoints = [
+          { x: 0.0, y: 0.0 },
+          { x: 1.0, y: 0.0 },
+          { x: 1.0, y: 1.0 }
+        ];
+      } else if (count === 4) {
+        polyPoints = [
+          { x: 0.0, y: 0.0 },
+          { x: 1.0, y: 0.0 },
+          { x: 1.0, y: 1.0 },
+          { x: 0.0, y: 1.0 }
+        ];
+      } else {
+        // For 5+ points, create a rectangle with additional center points
+        polyPoints = [
+          { x: 0.0, y: 0.0 },
+          { x: 1.0, y: 0.0 },
+          { x: 1.0, y: 1.0 },
+          { x: 0.0, y: 1.0 }
+        ];
+        // Add extra points at center
+        for (let i = 4; i < count; i++) {
+          polyPoints.push({ x: 0.5, y: 0.5 });
+        }
+      }
+      
+      updatePolygonTextarea();
+      drawPoly();
+      autosavePolygonDebounced();
+    }
+
+    function updatePolygonTextarea() {
+      $("poly_points").value = JSON.stringify(polyPoints, null, 2);
+    }
+
+    // Event listeners for polygon controls
+    $("polygon_points_count").addEventListener("change", (e) => {
+      ensurePolygonPointsCount(e.target.value);
+      autosavePolygonDebounced();
+    });
+
+    $("resetPolygonBtn").addEventListener("click", resetPolygonToDefault);
+
+    // Redraw polygon when enable/disable toggle changes
+    $("poly_enabled").addEventListener("change", () => {
+      drawPoly();
     });
 
     // Resize observer for canvas
@@ -758,6 +857,7 @@
         const cfg = await getCurrentConfig();
         cfg.polygon_cropping = cfg.polygon_cropping || {};
         cfg.polygon_cropping.enabled = ($("poly_enabled").value === "true");
+        cfg.polygon_cropping.points_count = parseInt($("polygon_points_count").value);
         try {
           cfg.polygon_cropping.points = JSON.parse($("poly_points").value || "[]");
         } catch(e) {
@@ -845,6 +945,7 @@
         // Advanced detection
         $("use_tta").value = String(cfg.runtime?.use_tta ?? false);
         $("max_det").value = cfg.runtime?.max_det ?? 100;
+        $("primary_iou").value = cfg.runtime?.primary_iou ?? 0.68;
         $("secondary_iou").value = cfg.runtime?.secondary_iou ?? 0.70;
         $("people_adjustment").value = cfg.runtime?.people_adjustment ?? -1;
         $("min_height_ratio").value = cfg.runtime?.min_height_ratio ?? 0.018;
@@ -859,6 +960,7 @@
         
         // Polygon cropping
         $("poly_enabled").value = String(cfg.polygon_cropping?.enabled ?? false);
+        $("polygon_points_count").value = cfg.polygon_cropping?.points_count ?? 4;
         $("poly_points").value = JSON.stringify(cfg.polygon_cropping?.points || [], null, 2);
         loadPolyFromTextarea();
         
@@ -930,6 +1032,7 @@
             selected_model: $("selected_model").value,
             use_tta: $("use_tta").value === "true",
             max_det: Number($("max_det").value),
+            primary_iou: Number($("primary_iou").value),
             secondary_iou: Number($("secondary_iou").value),
             min_height_ratio: Number($("min_height_ratio").value),
             min_area_ratio: Number($("min_area_ratio").value)
@@ -950,7 +1053,7 @@
           
           polygon_cropping: {
             enabled: $("poly_enabled").value === "true",
-            points_count: 4,
+            points_count: parseInt($("polygon_points_count").value),
             points: JSON.parse($("poly_points").value || "[]")
           },
           

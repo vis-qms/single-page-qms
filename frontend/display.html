@@ -110,7 +110,9 @@
       padding: clamp(10px, 1.8vw, 24px);
       border: 1px solid #2a3a52;
       display: inline-block;
-      min-width: 60%;
+      min-width: 80%;
+      max-width: 95%;
+      margin: 0 auto;
     }
     
     .wait-band.blue {
@@ -197,22 +199,18 @@
     const useWebSocket = params.get("ws") !== "false";
     const refreshRate = parseInt(params.get("refresh")) || 500;
     
-    // Format wait time - exact copy from main app
+    // Format wait time - show exact minutes and seconds
     function formatWaitTime(seconds) {
       if (seconds <= 0) return "NO WAIT";
       
-      // Round to nearest minute based on 30-second threshold - exact logic from main app
-      let roundedMinutes;
-      if (seconds < 30) {
-        roundedMinutes = 0;
-      } else if (seconds < 90) {
-        roundedMinutes = 1;
-      } else {
-        roundedMinutes = Math.round(seconds / 60);
-      }
+      const minutes = Math.floor(seconds / 60);
+      const remainingSeconds = Math.floor(seconds % 60);
       
-      if (roundedMinutes === 0) return "NO WAIT";
-      return `${roundedMinutes} MIN`;
+      if (minutes === 0) {
+        return `${remainingSeconds} SEC`;
+      } else {
+        return `${minutes} MIN ${remainingSeconds} SEC`;
+      }
     }
     
     // Apply color-coded wait time band - exact logic from main app
