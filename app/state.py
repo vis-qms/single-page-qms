@@ -113,7 +113,8 @@ class SharedState:
         self._rolling = deque(maxlen=10)    # rolling avg buffer
 
         self.wait_time = 0.0                # seconds
-        self.last_frame = None              # BGR frame (already cropped/masked)
+        self.last_frame = None              # BGR frame (display with overlay)
+        self.last_detection_frame = None    # BGR frame (cropped for detection)
         self.last_frame_ts = 0.0
         
         # Enhanced features
@@ -155,6 +156,19 @@ class SharedState:
                 json.dump(cfg, f, indent=2)
             with self.lock:
                 self.config = cfg
+                
+            # Debug polygon config when saving
+            poly = cfg.get("polygon_cropping", {})
+            if poly.get("enabled"):
+                pts = poly.get("points", [])
+                print(f"🔧 Config saved - Polygon enabled with {len(pts)} points:")
+                for i, p in enumerate(pts[:3]):  # Show first 3 points
+                    print(f"   Point {i+1}: x={p['x']:.3f}, y={p['y']:.3f}")
+                if len(pts) > 3:
+                    print(f"   ... and {len(pts)-3} more points")
+            else:
+                print("🔧 Config saved - Polygon cropping disabled")
+                
             return True
         except Exception as e:
             print("Failed to save config:", e)
@@ -280,16 +294,85 @@ class SharedState:
         return cap
 
     # ---------------- cropping ----------------
+    
+    def _polygon_points_to_pixels(self, polygon_points, w, h):
+        """Convert normalized polygon points to pixel coordinates - IDENTICAL to frontend polygon editor"""
+        if not polygon_points:
+            return []
+        
+        pixel_points = []
+        for p in polygon_points:
+            try:
+                # EXACT SAME as frontend normToPx function: pt.x * rect.width, pt.y * rect.height
+                x = int(float(p["x"]) * w)
+                y = int(float(p["y"]) * h)
+                pixel_points.append([x, y])
+            except Exception as e:
+                print(f"❌ Error parsing polygon point {p}: {e}")
+                continue
+        return pixel_points
 
-    def _apply_crop(self, frame, cfg):
+    def _apply_crop_for_detection(self, frame, cfg):
         """
-        1) Rect crop (percentages in runtime.*)
-        2) Polygon mask (normalized points in polygon_cropping.points)
+        Apply cropping for AI detection exactly like legacy QMS.
+        This CROPS the frame size (like PIL crop), not just masks it.
         """
         rt = (cfg or {}).get("runtime", {}) or {}
         poly = (cfg or {}).get("polygon_cropping", {}) or {}
 
-        # Rectangular crop
+        # Rectangular crop (like legacy crop_image function)
+        if bool(rt.get("enable_cropping", False)):
+            h, w = frame.shape[:2]
+            l = max(0, min(100, int(rt.get("crop_left", 0)))) / 100.0
+            t = max(0, min(100, int(rt.get("crop_top", 0)))) / 100.0
+            r = max(0, min(100, int(rt.get("crop_right", 100)))) / 100.0
+            b = max(0, min(100, int(rt.get("crop_bottom", 100)))) / 100.0
+            
+            # Convert to pixel coordinates
+            left = int(w * l)
+            top = int(h * t) 
+            right = int(w * r)
+            bottom = int(h * b)
+            
+            # Clamp to valid bounds
+            left = max(0, min(left, w))
+            top = max(0, min(top, h))
+            right = max(left, min(right, w))
+            bottom = max(top, min(bottom, h))
+            
+            # Actually crop the frame (like PIL crop)
+            if right > left and bottom > top:
+                frame = frame[top:bottom, left:right]
+                print(f"🔲 Rectangle crop applied: ({left},{top}) to ({right},{bottom}) -> {frame.shape}")
+
+        # Polygon mask (like legacy apply_polygon_mask_pil - keeps same frame size)
+        # Remove the rectangle cropping check - polygon should work independently
+        if bool(poly.get("enabled", False)):
+            pts = poly.get("points") or []
+            if isinstance(pts, list) and len(pts) >= 3:
+                h, w = frame.shape[:2]
+                # Use IDENTICAL coordinate conversion as frontend polygon editor
+                pixel_points = self._polygon_points_to_pixels(pts, w, h)
+                if len(pixel_points) >= 3:
+                    # Create mask and apply (keeps same frame dimensions)
+                    mask = np.zeros((h, w), dtype=np.uint8)
+                    cv2.fillPoly(mask, [np.array(pixel_points, dtype=np.int32)], 255)
+                    frame = cv2.bitwise_and(frame, frame, mask=mask)
+
+        return frame
+
+    def _apply_display_overlay(self, frame, cfg):
+        """
+        Apply visual overlay for preview display (like legacy QMS).
+        Shows full frame with dimmed areas outside crop/polygon.
+        NO GREEN LINES - just dimming effect.
+        """
+        rt = (cfg or {}).get("runtime", {}) or {}
+        poly = (cfg or {}).get("polygon_cropping", {}) or {}
+        
+        display_frame = frame.copy()
+        
+        # Rectangle cropping overlay - just dim outside, no green lines
         if bool(rt.get("enable_cropping", False)):
             h, w = frame.shape[:2]
             l = max(0, min(100, int(rt.get("crop_left", 0)))) / 100.0
@@ -301,28 +384,38 @@ class SharedState:
             x2 = max(0, min(w, x2))
             y1 = max(0, min(h - 1, y1))
             y2 = max(0, min(h, y2))
+            
+            # Dim outside area only
+            overlay = (display_frame * 0.5).astype(np.uint8)
+            display_frame = overlay.copy()
             if x2 > x1 and y2 > y1:
-                frame = frame[y1:y2, x1:x2]
-
-        # Polygon mask
+                display_frame[y1:y2, x1:x2] = frame[y1:y2, x1:x2]  # Keep original inside
+        
+        # Polygon cropping overlay (like legacy draw_polygon_overlay_bgr) - no green lines
         if bool(poly.get("enabled", False)):
             pts = poly.get("points") or []
             if isinstance(pts, list) and len(pts) >= 3:
-                hh, ww = frame.shape[:2]
-                arr = []
-                for p in pts:
-                    try:
-                        px = int(max(0.0, min(1.0, float(p["x"]))) * ww)
-                        py = int(max(0.0, min(1.0, float(p["y"]))) * hh)
-                        arr.append([px, py])
-                    except Exception:
-                        pass
-                if len(arr) >= 3:
-                    mask = np.zeros((hh, ww), dtype=np.uint8)
-                    cv2.fillPoly(mask, [np.array(arr, dtype=np.int32)], 255)
-                    frame = cv2.bitwise_and(frame, frame, mask=mask)
-
-        return frame
+                h, w = frame.shape[:2]
+                # Use IDENTICAL coordinate conversion as frontend polygon editor
+                pixel_points = self._polygon_points_to_pixels(pts, w, h)
+                if len(pixel_points) >= 3:
+                    poly_pts = np.array(pixel_points, dtype=np.int32)
+                    
+                    # Create overlay with red polygon outline (exactly like fastapi-qms_copy)
+                    overlay = display_frame.copy()
+                    cv2.polylines(overlay, [poly_pts], isClosed=True, color=(0, 0, 255), thickness=2)
+                    
+                    # Create mask for polygon area (identical to detection mask)
+                    mask = np.zeros((h, w), dtype=np.uint8)
+                    cv2.fillPoly(mask, [poly_pts], 255)
+                    
+                    # Dim everything to 30% (like fastapi-qms_copy)
+                    dim = (display_frame * 0.3).astype(display_frame.dtype)
+                    
+                    # Show overlay (with red outline) inside polygon, dimmed outside
+                    display_frame = np.where(mask[..., None] == 255, overlay, dim)
+        
+        return display_frame
 
     # ---------------- models ----------------
 
@@ -402,7 +495,9 @@ class SharedState:
         if bool(poly.get("enabled", False)):
             pts = poly.get("points") or []
             if len(pts) >= 3:
-                roi_polygon = [(int(p["x"]/100.0*w), int(p["y"]/100.0*h)) for p in pts]
+                # Use IDENTICAL coordinate conversion as frontend polygon editor
+                pixel_points = self._polygon_points_to_pixels(pts, w, h)
+                roi_polygon = [(pt[0], pt[1]) for pt in pixel_points]
         
         def _inside_roi_center(bbox, polygon):
             if not polygon:
@@ -596,7 +691,7 @@ class SharedState:
         print(f"🛑 Stopped frame capture thread")
     
     def _capture_frames(self):
-        """Dedicated frame capture thread (like legacy QMS)"""
+        """Optimized frame capture thread (based on legacy QMS optimizations)"""
         cap = None
         try:
             # Open capture
@@ -608,7 +703,7 @@ class SharedState:
                 cap = cv2.VideoCapture(0)
                 
             if cap is not None:
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize buffer lag
                 try:
                     cap.set(cv2.CAP_PROP_TIMEOUT, 10000)
                 except:
@@ -617,37 +712,46 @@ class SharedState:
             self._frame_capture = cap
             self.connected = cap is not None and cap.isOpened()
             
-            # Frame capture loop
-            target_fps = 30  # High FPS for smooth preview
-            frame_interval = 1.0 / target_fps
+            # Optimized frame capture loop (30 FPS like legacy QMS)
+            target_fps = 30
+            frame_interval = 1.0 / max(10, int(target_fps))
             
             while self.capture_running and cap and cap.isOpened():
                 try:
                     ret, frame = cap.read()
                     if ret and frame is not None:
-                        # Apply cropping
                         cfg = self.get_config()
-                        frame = self._apply_crop(frame, cfg)
                         
-                        # Update frame queue (keep only latest)
+                        # Create display frame with overlay (for preview)
+                        display_frame = self._apply_display_overlay(frame, cfg)
+                        
+                        # Create detection frame with cropping (for AI processing)
+                        detection_frame = self._apply_crop_for_detection(frame, cfg)
+                        
+                        # LEGACY QMS OPTIMIZATION: Smart queue management
+                        # Always discard old frames, keep only the latest (non-blocking)
                         try:
+                            # Remove old frame if queue not empty (legacy QMS pattern)
                             if not self.frame_queue.empty():
                                 try:
-                                    self.frame_queue.get_nowait()
+                                    self.frame_queue.get_nowait()  # Discard old frame
                                 except queue.Empty:
                                     pass
-                            self.frame_queue.put(frame, timeout=0.01)
+                            # Put new frame (non-blocking, timeout very short)
+                            self.frame_queue.put(display_frame, timeout=0.01)
                             
-                            # Also update last_frame for compatibility
+                            # Store both frames for different uses (minimal locking)
                             with self.lock:
-                                self.last_frame = frame.copy()
+                                self.last_frame = display_frame.copy()  # For preview
+                                self.last_detection_frame = detection_frame.copy()  # For AI
                                 self.last_frame_ts = time.time()
                                 
                         except queue.Full:
+                            # Queue full - skip this frame (legacy QMS behavior)
                             pass
+                            
                     else:
-                        # Reconnect on read failure
-                        print(f"🔄 Frame read failed, attempting reconnect...")
+                        # Reconnect on read failure (legacy QMS pattern)
                         time.sleep(1.0)
                         if self.capture_running and self.current_stream_url:
                             try:
@@ -661,10 +765,12 @@ class SharedState:
                                 self.connected = cap.isOpened()
                             except:
                                 break
+                                
                 except Exception as e:
                     print(f"❌ Frame capture error: {e}")
                     break
                     
+                # LEGACY QMS OPTIMIZATION: Precise FPS timing
                 time.sleep(max(0.0, frame_interval))
                 
         finally:
@@ -674,7 +780,7 @@ class SharedState:
                 except:
                     pass
             self.connected = False
-            print(f"🎬 Frame capture thread ended")
+            print(f"🎬 Optimized frame capture thread ended")
     
     def get_latest_frame(self):
         """Get latest frame from queue (non-blocking like legacy QMS)"""
@@ -682,6 +788,13 @@ class SharedState:
             return self.frame_queue.get_nowait()
         except queue.Empty:
             return None
+    
+    def get_latest_detection_frame(self):
+        """Get latest detection frame (non-blocking, optimized for AI processing)"""
+        with self.lock:
+            if self.last_detection_frame is not None:
+                return self.last_detection_frame.copy()
+        return None
 
     # ---------------- worker loop ----------------
 
@@ -716,7 +829,7 @@ class SharedState:
         print("🛑 Detection system stopped")
 
     def _loop(self):
-        """Detection loop that uses frames from the queue system"""
+        """Optimized detection loop (based on legacy QMS optimizations)"""
         last_det = 0.0
         frame_count = 0
         
@@ -724,35 +837,34 @@ class SharedState:
             cfg = self.get_config()
             
             # Check if connection config changed - restart frame capture if needed
-            new_connection_config = (cfg or {}).get("connection", {})
             new_stream_url = self._build_stream_url(cfg)
             if new_stream_url != self.current_stream_url:
                 print(f"🔄 DETECTION: Connection config changed, restarting frame capture...")
                 self._start_frame_capture(cfg)
 
-            # Get frame from queue (non-blocking)
-            frame = self.get_latest_frame()
-            if frame is None:
-                time.sleep(0.1)  # Wait for frames
+            # LEGACY QMS OPTIMIZATION: Non-blocking frame access
+            # Always get the LATEST frame, never wait for old frames
+            detection_frame = self.get_latest_detection_frame()
+                    
+            if detection_frame is None:
+                # No frame available yet - short sleep and continue (non-blocking)
+                time.sleep(0.05)  # Shorter sleep for better responsiveness
                 continue
                 
             frame_count += 1
             now = time.time()
-            
-            if frame_count % 30 == 0:
-                print(f"📹 Detection frame #{frame_count}: {frame.shape}")
 
+            # LEGACY QMS OPTIMIZATION: Detection interval timing
             # Clamp detection interval 0.1..10.0
             det_interval = float((cfg or {}).get("runtime", {}).get("detection_interval", 1.0))
             det_interval = max(0.1, min(10.0, det_interval))
             
             time_since_last = now - last_det
-            if frame_count % 60 == 0:  # Log every 60 frames
-                print(f"⏱️  Detection timing: {time_since_last:.2f}s since last (interval: {det_interval}s)")
 
+            # LEGACY QMS OPTIMIZATION: Process at intervals but on FRESH frames only
             if time_since_last >= det_interval:
                 print(f"🤖 Starting detection inference (interval: {det_interval}s)")
-                detection_results = self._infer(frame, cfg)
+                detection_results = self._infer(detection_frame, cfg)
                 print(f"🔍 Detection results: {detection_results if isinstance(detection_results, dict) else f'count={detection_results}'}")
                 
                 if isinstance(detection_results, dict):
@@ -824,8 +936,9 @@ class SharedState:
 
                 last_det = now
 
-            # Fast detection loop - don't slow it down
-            time.sleep(0.1)
+            # LEGACY QMS OPTIMIZATION: Minimal sleep for maximum responsiveness
+            # Fast loop that doesn't block, always processes latest frames
+            time.sleep(0.02)  # Much shorter sleep (50 FPS loop) for better responsiveness
 
 
 STATE = SharedState()

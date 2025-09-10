@@ -16,10 +16,10 @@
   },
   "runtime": {
     "frame_read_fps": 30,
-    "detection_interval": 1,
+    "detection_interval": 0.1,
     "half_precision": false,
     "image_quality": "High (Sharp)",
-    "confidence_threshold": 0.4,
+    "confidence_threshold": 0.5,
     "imgsz": 1280,
     "enable_cropping": false,
     "crop_left": 0,
@@ -29,7 +29,7 @@
     "per_person_time_min": 22,
     "per_person_time_max": 26,
     "people_adjustment": 0,
-    "selected_model": "YOLOv12l",
+    "selected_model": "YOLOv12x",
     "use_tta": false,
     "max_det": 100,
     "secondary_iou": 0.7,
@@ -48,24 +48,32 @@
     "max_delta_per_detection": 1
   },
   "polygon_cropping": {
-    "enabled": false,
+    "enabled": true,
     "points_count": 4,
     "points": [
       {
-        "x": 0.037078797064749265,
-        "y": 0.0515625
+        "x": 0.5079018872109573,
+        "y": 0.1640625
       },
       {
-        "x": 0.95269958041441,
-        "y": 0.0234375
+        "x": 0.7728877469917377,
+        "y": 0.1390625
       },
       {
-        "x": 0.9810909225337794,
-        "y": 0.9890625
+        "x": 0.7279347886360695,
+        "y": 0.8578125
       },
       {
-        "x": 0.02524907118167871,
-        "y": 0.9734375
+        "x": 0.223988466017264,
+        "y": 0.8578125
+      },
+      {
+        "x": 0.20979279495757935,
+        "y": 0.2203125
+      },
+      {
+        "x": 0.4132640801463929,
+        "y": 0.1609375
       }
     ]
   },

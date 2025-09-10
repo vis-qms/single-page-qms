@@ -154,11 +154,12 @@ def mjpeg_preview(
         
         # If detection is running, use queue frames
         if STATE.running and STATE.capture_running:
-            print(f"🎥 PREVIEW: Using queue frames (detection running)")
+            print(f"🎥 PREVIEW: Using optimized queue frames (detection running)")
             while STATE.running and STATE.capture_running:
-                frame = STATE.get_latest_frame()
+                # LEGACY QMS OPTIMIZATION: Non-blocking frame access
+                frame = STATE.get_latest_frame()  # Always gets latest, never blocks
                 if frame is None:
-                    time.sleep(0.02)
+                    time.sleep(0.02)  # Short sleep, no blocking
                     continue
                     
                 frame = resize_if_needed(frame)
@@ -181,9 +182,10 @@ def mjpeg_preview(
         
         # Use queue frames even for preview-only mode
         while not STATE.running:  # While detection is not running
-            frame = STATE.get_latest_frame()
+            # LEGACY QMS OPTIMIZATION: Non-blocking frame access for preview
+            frame = STATE.get_latest_frame()  # Always gets latest, never blocks
             if frame is None:
-                time.sleep(0.02)
+                time.sleep(0.02)  # Short sleep, no blocking
                 continue
                 
             frame = resize_if_needed(frame)
