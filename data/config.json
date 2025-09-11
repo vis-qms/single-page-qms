@@ -1,7 +1,7 @@
 {
   "gate_id": "GATE-01",
   "gate_name": "GATE",
-  "gate_number": "02A",
+  "gate_number": "02B",
   "connection": {
     "connection_type": "Webcam",
     "ip_address": "192.168.1.165",
@@ -53,8 +53,8 @@
     "points_count": 4,
     "points": [
       {
-        "x": 0.30206465684552963,
-        "y": 0.1015625
+        "x": 0.2831370954326168,
+        "y": 0.1140625
       },
       {
         "x": 0.7634239662852812,
@@ -71,11 +71,8 @@
     ]
   },
   "display_config": {
-    "theme_option": "Dark (Airport Standard)",
-    "font_size_multiplier": 1,
-    "accent_color": "#1f77b4",
-    "people_count_color": "#1f77b4",
-    "brightness_level": 1,
-    "contrast_level": 1
+    "gate_font_size": 1,
+    "label_font_size": 1,
+    "value_font_size": 1
   }
 }

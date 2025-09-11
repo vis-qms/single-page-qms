@@ -525,7 +525,7 @@
 
     <!-- Wait Time Calculation -->
     <section class="card">
-      <h2>Wait Time Calculation</h2>
+      <h2>Wait Time Prediction</h2>
       <div class="row">
         <div><label>Min Time per Person (s)
           <input type="number" id="per_person_time_min" value="22" min="5" max="120"/>
@@ -534,38 +534,24 @@
           <input type="number" id="per_person_time_max" value="26" min="5" max="120"/>
         </label></div>
       </div>
-      <div class="muted">Random time per person is calculated between min and max values</div>
     </section>
 
     <!-- Display Configuration -->
     <section class="card">
       <h2>Display Configuration</h2>
       <div class="row">
-        <div><label>Theme
-          <select id="theme_option">
-            <option value="Dark (Airport Standard)" selected>Dark (Airport Standard)</option>
-            <option value="Light (Bright)">Light (Bright)</option>
-            <option value="High Contrast">High Contrast</option>
-          </select></label></div>
-        <div><label>Font Size Multiplier
-          <input type="number" step="0.1" min="0.5" max="3.0" id="font_size_multiplier" value="1.0"/>
+        <div><label>Gate Heading Font Size Multiplier
+          <input type="number" step="0.1" min="0.5" max="3.0" id="gate_font_size" value="1.0"/>
+        </label></div>
+        <div><label>Label Font Size Multiplier
+          <input type="number" step="0.1" min="0.5" max="3.0" id="label_font_size" value="1.0"/>
         </label></div>
       </div>
       <div class="row">
-        <div><label>Accent Color
-          <input type="color" id="accent_color" value="#1f77b4"/>
+        <div><label>Value Font Size Multiplier
+          <input type="number" step="0.1" min="0.5" max="3.0" id="value_font_size" value="1.0"/>
         </label></div>
-        <div><label>People Count Color
-          <input type="color" id="people_count_color" value="#1f77b4"/>
-        </label></div>
-      </div>
-      <div class="row">
-        <div><label>Brightness Level
-          <input type="number" step="0.1" min="0.1" max="2.0" id="brightness_level" value="1.0"/>
-        </label></div>
-        <div><label>Contrast Level
-          <input type="number" step="0.1" min="0.1" max="2.0" id="contrast_level" value="1.0"/>
-        </label></div>
+        <div></div>
       </div>
     </section>
   </main>
@@ -981,12 +967,10 @@
         
         // Display config
         const display = cfg.display_config || {};
-        $("theme_option").value = display.theme_option || "Dark (Airport Standard)";
-        $("font_size_multiplier").value = display.font_size_multiplier ?? 1.0;
-        $("accent_color").value = display.accent_color || "#1f77b4";
-        $("people_count_color").value = display.people_count_color || "#1f77b4";
-        $("brightness_level").value = display.brightness_level ?? 1.0;
-        $("contrast_level").value = display.contrast_level ?? 1.0;
+        console.log('Loading display config:', display);
+        $("gate_font_size").value = display.gate_font_size ?? 1.0;
+        $("label_font_size").value = display.label_font_size ?? 1.0;
+        $("value_font_size").value = display.value_font_size ?? 1.0;
         
       } catch(e) {
         console.error("Failed to load config:", e);
@@ -1058,12 +1042,9 @@
           },
           
           display_config: {
-            theme_option: $("theme_option").value,
-            font_size_multiplier: Number($("font_size_multiplier").value),
-            accent_color: $("accent_color").value,
-            people_count_color: $("people_count_color").value,
-            brightness_level: Number($("brightness_level").value),
-            contrast_level: Number($("contrast_level").value)
+            gate_font_size: Number($("gate_font_size").value),
+            label_font_size: Number($("label_font_size").value),
+            value_font_size: Number($("value_font_size").value)
           }
         };
         

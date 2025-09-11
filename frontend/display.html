@@ -12,13 +12,18 @@
     
     /* Legacy QMS styling constants */
     :root {
-      --sun-bg: #0A0D14;
+      --sun-bg: #000000;
       --sun-text: #FFFFFF;
       --sun-card-bg: #0E1420;
       --sun-card-border: #2E3A52;
       --sun-muted: #B9C0CC;
       --sun-accent: #9CC2FF;
       --sun-big: #FFFFFF;
+      
+      /* Font size multipliers - configurable */
+      --gate-font-size: 1.0;
+      --label-font-size: 1.0;
+      --value-font-size: 1.0;
     }
     
     body {
@@ -48,25 +53,25 @@
       color: var(--sun-accent);
       letter-spacing: .04em;
       margin: 0.2rem 0 clamp(8px, 1.4vh, 18px) 0;
-      font-size: clamp(24px, 6vw, 96px);
+      font-size: calc(clamp(24px, 6vw, 96px) * var(--gate-font-size));
       line-height: 1.05;
     }
     
     /* Separator lines - exact copy */
     .separator {
-      height: 4px;
+      height: 20px;
       background: var(--sun-card-border);
-      margin: clamp(15px, 3vh, 25px) auto clamp(30px, 5vh, 40px) auto;
-      max-width: 80%;
-      border-radius: 2px;
+      margin: clamp(10px, 2vh, 18px) auto clamp(20px, 3vh, 30px) auto;  /* reduced from 15px,3vh,25px and 30px,5vh,40px */
+      max-width: 90%;
+      border-radius: 10px;
     }
     
     .main-separator {
-      height: 4px;
+      height: 20px;
       background: var(--sun-card-border);
-      margin: clamp(30px, 5vh, 50px) auto;
-      max-width: 80%;
-      border-radius: 2px;
+      margin: clamp(10px, 2vh, 18px) auto clamp(20px, 3vh, 30px) auto;  /* reduced from 15px,3vh,25px and 30px,5vh,40px */
+      max-width: 90%;
+      border-radius: 10px;
     }
     
     /* People section - exact copy */
@@ -80,7 +85,7 @@
       color: var(--sun-text);
       text-align: center;
       margin-bottom: clamp(6px, 1.4vh, 16px);
-      font-size: clamp(14px, 2.6vw, 40px);
+      font-size: calc(clamp(24px, 3.5vw, 55px) * var(--label-font-size));
     }
     
     .people-count {
@@ -89,7 +94,7 @@
       color: var(--sun-big);
       line-height: 1.0;
       margin: 0;
-      font-size: clamp(40px, 10vw, 160px);
+      font-size: calc(clamp(40px, 10vw, 160px) * var(--value-font-size));
     }
     
     /* Wait time section - exact copy */
@@ -102,7 +107,7 @@
       color: var(--sun-text);
       text-align: center;
       margin-bottom: clamp(6px, 1.4vh, 16px);
-      font-size: clamp(14px, 2.6vw, 40px);
+      font-size: calc(clamp(24px, 3.5vw, 55px) * var(--label-font-size));
     }
     
     .wait-band {
@@ -110,29 +115,25 @@
       padding: clamp(10px, 1.8vw, 24px);
       border: 1px solid #2a3a52;
       display: inline-block;
-      min-width: 80%;
-      max-width: 95%;
+      min-width: 90%;
+      max-width: 98%;
       margin: 0 auto;
     }
     
     .wait-band.blue {
       background: #10253B;
-      color: #9CC2FF;
     }
     
     .wait-band.green {
       background: #0E3B20;
-      color: #4cff8f;
     }
     
     .wait-band.yellow {
       background: #3B370E;
-      color: #ffe066;
     }
     
     .wait-band.red {
       background: #3B0E13;
-      color: #ff6b6b;
     }
     
     .wait-time {
@@ -140,10 +141,11 @@
       text-align: center;
       line-height: 1.0;
       margin: 0;
-      font-size: clamp(40px, 10vw, 160px);
+      font-size: calc(clamp(40px, 10vw, 160px) * var(--value-font-size));
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      color: #FFFFFF !important;
     }
     
     /* Loading state */
@@ -236,6 +238,18 @@
     // Update display with data
     function updateDisplay(data) {
       try {
+        // Apply font size configurations
+        const displayConfig = data.display_config || {};
+        const gateFontSize = displayConfig.gate_font_size || 1.0;
+        const labelFontSize = displayConfig.label_font_size || 1.0;
+        const valueFontSize = displayConfig.value_font_size || 1.0;
+        
+        console.log('Font size config:', { gateFontSize, labelFontSize, valueFontSize });
+        
+        document.documentElement.style.setProperty('--gate-font-size', gateFontSize);
+        document.documentElement.style.setProperty('--label-font-size', labelFontSize);
+        document.documentElement.style.setProperty('--value-font-size', valueFontSize);
+        
         // Update gate header - exact format from main app
         const gateName = data.gate_name || "GATE";
         const gateNumber = data.gate_number || data.gate_id || "01";
@@ -345,6 +359,11 @@
     
     // Initialize display
     function initialize() {
+      // Set default font sizes on page load
+      document.documentElement.style.setProperty('--gate-font-size', '1.0');
+      document.documentElement.style.setProperty('--label-font-size', '1.0');
+      document.documentElement.style.setProperty('--value-font-size', '1.0');
+      
       // Start connection
       if (useWebSocket) {
         connectWebSocket();

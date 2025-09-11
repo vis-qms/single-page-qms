@@ -122,7 +122,8 @@ def api_status():
             "total_detections": STATE.total_detections,
             "average_inference_time": STATE.average_inference_time,
             "model": cfg.get("runtime", {}).get("selected_model", "YOLOv11x"),
-            "confidence": cfg.get("runtime", {}).get("confidence_threshold", 0.5)
+            "confidence": cfg.get("runtime", {}).get("confidence_threshold", 0.5),
+            "display_config": cfg.get("display_config", {})
         }
 
 
