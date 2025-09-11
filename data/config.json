@@ -43,7 +43,7 @@
     "iou_thr": 0.4
   },
   "count_stabilization": {
-    "method": "EMA",
+    "method": "Median",
     "avg_window_frames": 3,
     "ema_alpha": 0.65,
     "max_delta_per_detection": 1
@@ -53,12 +53,12 @@
     "points_count": 4,
     "points": [
       {
-        "x": 0.25237980813663335,
-        "y": 0.19926207977260638
+        "x": 0.25474575331324745,
+        "y": 0.131964083637805
       },
       {
-        "x": 0.6758839947505592,
-        "y": 0.17823145598048096
+        "x": 0.7137391175763849,
+        "y": 0.15720083218835554
       },
       {
         "x": 0.6806158851037873,
@@ -73,6 +73,7 @@
   "display_config": {
     "gate_font_size": 1,
     "label_font_size": 1,
-    "value_font_size": 1
+    "value_font_size": 1,
+    "hide_people_count": true
   }
 }

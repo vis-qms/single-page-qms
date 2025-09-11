@@ -65,7 +65,7 @@ class TinyIOUTracker:
         return [{'id': tid, **t} for tid, t in self.tracks.items()]
 
 class CountStabilizer:
-    """Advanced count stabilization using EMA or Rolling Average"""
+    """Advanced count stabilization using EMA, Rolling Average, or Median"""
     def __init__(self, method="EMA", ema_alpha=0.65, window_frames=3, max_delta=1):
         self.method = method
         self.ema_alpha = ema_alpha
@@ -81,6 +81,19 @@ class CountStabilizer:
                 self.ema_value = float(raw_count)
             self.ema_value = self.ema_alpha * float(raw_count) + (1.0 - self.ema_alpha) * float(self.ema_value)
             averaged_count = int(round(self.ema_value))
+        elif self.method == "Median":
+            # Median stabilization - use exactly 3 frames
+            self.raw_buffer.append(int(raw_count))
+            if len(self.raw_buffer) > 3:
+                self.raw_buffer = self.raw_buffer[-3:]
+            
+            # Calculate median only when we have 3 frames
+            if len(self.raw_buffer) >= 3:
+                sorted_buffer = sorted(self.raw_buffer)
+                averaged_count = sorted_buffer[1]  # Middle value (median)
+            else:
+                # Use the latest value if we don't have 3 frames yet
+                averaged_count = int(raw_count)
         else:  # Rolling Average
             self.raw_buffer.append(int(raw_count))
             if len(self.raw_buffer) > self.window_frames:

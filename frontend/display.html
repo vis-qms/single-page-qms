@@ -74,10 +74,55 @@
       border-radius: 10px;
     }
     
+    /* Hidden state for separators */
+    .separator.hidden, .main-separator.hidden {
+      display: none;
+    }
+    
     /* People section - exact copy */
     .people-section {
       text-align: center;
       margin-bottom: clamp(20px, 4vh, 40px);
+    }
+    
+    /* Hidden state for people section */
+    .people-section.hidden {
+      display: none;
+    }
+    
+    /* Enhanced layout when people count is hidden */
+    .display-container.people-hidden {
+      /* Adjust padding to center content better */
+      padding: 4vh 2vw;
+    }
+    
+    .display-container.people-hidden .gate-header {
+      /* Increase gate font size significantly when people count is hidden */
+      font-size: calc(clamp(32px, 8vw, 120px) * var(--gate-font-size));
+      margin-bottom: clamp(16px, 3vh, 32px);
+    }
+    
+    .display-container.people-hidden .wait-section {
+      /* Add more top margin to center the wait section better */
+      margin-top: clamp(32px, 8vh, 64px);
+    }
+    
+    .display-container.people-hidden .wait-label {
+      /* Increase wait label font size more and add better spacing */
+      font-size: calc(clamp(32px, 5.5vw, 85px) * var(--label-font-size));
+      margin-bottom: clamp(80px, 12vh, 100px);
+      margin-top: clamp(40px, 5vh, 60px);
+    }
+    
+    .display-container.people-hidden .wait-time {
+      /* Increase wait time value font size */
+      font-size: calc(clamp(48px, 12vw, 180px) * var(--value-font-size));
+    }
+    
+    .display-container.people-hidden .wait-band {
+      /* Increase padding for better visual balance */
+      padding: clamp(16px, 2.5vw, 32px);
+      min-width: 95%;
     }
     
     .people-label {
@@ -243,10 +288,12 @@
         const gateFontSize = displayConfig.gate_font_size || 1.0;
         const labelFontSize = displayConfig.label_font_size || 1.0;
         const valueFontSize = displayConfig.value_font_size || 1.0;
+        const hidePeopleCount = displayConfig.hide_people_count || false;
         
         // Temporarily add debug logging
         console.log('🎨 Display config received:', displayConfig);
         console.log('🎨 Font sizes applied:', { gateFontSize, labelFontSize, valueFontSize });
+        console.log('🎨 Hide people count:', hidePeopleCount);
         
         document.documentElement.style.setProperty('--gate-font-size', String(gateFontSize));
         document.documentElement.style.setProperty('--label-font-size', String(labelFontSize));
@@ -257,10 +304,30 @@
         const gateNumber = data.gate_number || data.gate_id || "01";
         document.getElementById("gateHeader").textContent = `${gateName.toUpperCase()} ${gateNumber}`;
         
-        // Update people count
-        const peopleEl = document.getElementById("peopleCount");
-        const newCount = data.people_count ?? 0;
-        peopleEl.textContent = newCount;
+        // Handle people count visibility
+        const displayContainer = document.querySelector(".display-container");
+        const peopleSection = document.querySelector(".people-section");
+        const separator = document.querySelector(".separator");
+        const mainSeparator = document.querySelector(".main-separator");
+        
+        if (hidePeopleCount) {
+          // Hide people section and separators, add enhanced layout class
+          peopleSection.classList.add("hidden");
+          separator.classList.add("hidden");
+          mainSeparator.classList.add("hidden");
+          displayContainer.classList.add("people-hidden");
+        } else {
+          // Show people section and separators, remove enhanced layout class
+          peopleSection.classList.remove("hidden");
+          separator.classList.remove("hidden");
+          mainSeparator.classList.remove("hidden");
+          displayContainer.classList.remove("people-hidden");
+          
+          // Update people count
+          const peopleEl = document.getElementById("peopleCount");
+          const newCount = data.people_count ?? 0;
+          peopleEl.textContent = newCount;
+        }
         
         // Update wait time - use wait_seconds if available, otherwise convert from wait_time
         const waitSeconds = data.wait_seconds || Math.round((data.wait_time || 0) * 60);

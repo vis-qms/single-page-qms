@@ -508,6 +508,7 @@
           <select id="stab_method">
             <option value="EMA" selected>EMA (Exponential Moving Average)</option>
             <option value="Rolling">Rolling Average</option>
+            <option value="Median">Median (3 frames)</option>
           </select></label></div>
         <div><label>EMA Alpha
           <input type="number" step="0.01" min="0.1" max="1.0" id="ema_alpha" value="0.65"/>
@@ -551,7 +552,11 @@
         <div><label>Value Font Size Multiplier
           <input type="number" step="0.1" min="0.5" max="3.0" id="value_font_size" value="1.0"/>
         </label></div>
-        <div></div>
+        <div><label>Hide People Count & Show Only Gate + Wait Time
+          <select id="hide_people_count">
+            <option value="false">Show People Count (Default)</option>
+            <option value="true">Hide People Count</option>
+          </select></label></div>
       </div>
     </section>
   </main>
@@ -1018,6 +1023,7 @@
         $("gate_font_size").value = display.gate_font_size ?? 1.0;
         $("label_font_size").value = display.label_font_size ?? 1.0;
         $("value_font_size").value = display.value_font_size ?? 1.0;
+        $("hide_people_count").value = String(display.hide_people_count ?? false);
         
       } catch(e) {
         console.error("Failed to load config:", e);
@@ -1091,7 +1097,8 @@
           display_config: {
             gate_font_size: Number($("gate_font_size").value),
             label_font_size: Number($("label_font_size").value),
-            value_font_size: Number($("value_font_size").value)
+            value_font_size: Number($("value_font_size").value),
+            hide_people_count: $("hide_people_count").value === "true"
           }
         };
         
