@@ -246,24 +246,42 @@
     const useWebSocket = params.get("ws") !== "false";
     const refreshRate = parseInt(params.get("refresh")) || 500;
     
-    // Format wait time - show exact minutes and seconds
-    function formatWaitTime(seconds) {
+    // Format wait time based on display configuration
+    function formatWaitTime(seconds, timeFormat = "minutes_seconds") {
       if (seconds <= 0) return "NO WAIT";
       
-      const minutes = Math.floor(seconds / 60);
-      const remainingSeconds = Math.floor(seconds % 60);
-      
-      // Always show both minutes and seconds, even when minutes is 0
-      return `${minutes} MIN ${remainingSeconds} SEC`;
+      if (timeFormat === "minute_range") {
+        // Minute range format: x - x+1 minutes
+        // x is 1 if >30 seconds, else 0 if <=30 seconds
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = Math.floor(seconds % 60);
+        
+        let baseMinute;
+        if (remainingSeconds > 30) {
+          baseMinute = minutes + 1;
+        } else {
+          baseMinute = minutes;
+        }
+        
+        const nextMinute = baseMinute + 1;
+        return `${baseMinute} - ${nextMinute} MIN`;
+      } else {
+        // Default minutes + seconds format
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = Math.floor(seconds % 60);
+        
+        // Always show both minutes and seconds, even when minutes is 0
+        return `${minutes} MIN ${remainingSeconds} SEC`;
+      }
     }
     
     // Apply color-coded wait time band - exact logic from main app
-    function applyWaitBand(totalSeconds) {
+    function applyWaitBand(totalSeconds, timeFormat = "minutes_seconds") {
       const bandEl = document.getElementById("waitBand");
       const textEl = document.getElementById("waitText");
       
       let className = "blue";
-      const text = formatWaitTime(totalSeconds);
+      const text = formatWaitTime(totalSeconds, timeFormat);
       
       // Color coding based on wait time (matching main app logic)
       if (totalSeconds <= 0) {
@@ -331,7 +349,8 @@
         
         // Update wait time - use wait_seconds if available, otherwise convert from wait_time
         const waitSeconds = data.wait_seconds || Math.round((data.wait_time || 0) * 60);
-        applyWaitBand(waitSeconds);
+        const timeFormat = displayConfig.time_format || "minutes_seconds";
+        applyWaitBand(waitSeconds, timeFormat);
         
         // Show display if hidden
         if (document.getElementById("display").style.display === "none") {

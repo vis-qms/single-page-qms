@@ -65,7 +65,7 @@ class TinyIOUTracker:
         return [{'id': tid, **t} for tid, t in self.tracks.items()]
 
 class CountStabilizer:
-    """Advanced count stabilization using EMA, Rolling Average, or Median"""
+    """Advanced count stabilization using EMA, Rolling Average, or 3-Frame Average (Median)"""
     def __init__(self, method="EMA", ema_alpha=0.65, window_frames=3, max_delta=1):
         self.method = method
         self.ema_alpha = ema_alpha
@@ -82,18 +82,9 @@ class CountStabilizer:
             self.ema_value = self.ema_alpha * float(raw_count) + (1.0 - self.ema_alpha) * float(self.ema_value)
             averaged_count = int(round(self.ema_value))
         elif self.method == "Median":
-            # Median stabilization - use exactly 3 frames
-            self.raw_buffer.append(int(raw_count))
-            if len(self.raw_buffer) > 3:
-                self.raw_buffer = self.raw_buffer[-3:]
-            
-            # Calculate median only when we have 3 frames
-            if len(self.raw_buffer) >= 3:
-                sorted_buffer = sorted(self.raw_buffer)
-                averaged_count = sorted_buffer[1]  # Middle value (median)
-            else:
-                # Use the latest value if we don't have 3 frames yet
-                averaged_count = int(raw_count)
+            # Median stabilization - averaging is done at detection level (3 consecutive frames)
+            # Just pass through the already-averaged result
+            averaged_count = int(raw_count)
         else:  # Rolling Average
             self.raw_buffer.append(int(raw_count))
             if len(self.raw_buffer) > self.window_frames:
@@ -887,19 +878,61 @@ class SharedState:
             # LEGACY QMS OPTIMIZATION: Process at intervals but on FRESH frames only
             if time_since_last >= det_interval:
                 print(f"🤖 Starting detection inference (interval: {det_interval}s)")
-                detection_results = self._infer(detection_frame, cfg)
-                print(f"🔍 Detection results: {detection_results if isinstance(detection_results, dict) else f'count={detection_results}'}")
                 
-                if isinstance(detection_results, dict):
-                    raw_pc = detection_results.get('people_count', 0)
-                    detections = detection_results.get('detections', [])
-                    inference_time = detection_results.get('inference_time', 0.0)
-                    model_name = detection_results.get('model_name', 'Unknown')
+                # Check if using Median stabilization - run detection on 3 consecutive frames
+                stab_method = (cfg or {}).get("count_stabilization", {}).get("method", "EMA")
+                
+                if stab_method == "Median":
+                    print(f"🔄 Using Median stabilization - processing 3 consecutive frames...")
+                    frame_results = []
+                    total_inference_time = 0.0
+                    
+                    # Process 3 consecutive frames
+                    for i in range(3):
+                        # Get a fresh frame for each detection
+                        frame_for_detection = self.get_latest_detection_frame()
+                        if frame_for_detection is not None:
+                            result = self._infer(frame_for_detection, cfg)
+                            if isinstance(result, dict):
+                                frame_results.append(result.get('people_count', 0))
+                                total_inference_time += result.get('inference_time', 0.0)
+                                print(f"   Frame {i+1}: {result.get('people_count', 0)} people (inference: {result.get('inference_time', 0.0)*1000:.1f}ms)")
+                            else:
+                                frame_results.append(result)
+                                print(f"   Frame {i+1}: {result} people")
+                        else:
+                            print(f"   Frame {i+1}: No frame available")
+                            if frame_results:  # Use last result if no frame available
+                                frame_results.append(frame_results[-1])
+                            else:
+                                frame_results.append(0)
+                        
+                        # Small delay between frames to get different frames
+                        time.sleep(0.033)  # ~30ms for 30fps
+                    
+                    # Average the results from 3 frames
+                    raw_pc = int(round(sum(frame_results) / len(frame_results))) if frame_results else 0
+                    detections = []  # We don't track individual detections in multi-frame mode
+                    inference_time = total_inference_time / len(frame_results) if frame_results else 0.0
+                    model_name = 'Multi-frame'
+                    
+                    print(f"🔍 3-Frame results: {frame_results} → Average: {raw_pc}")
+                    
                 else:
-                    raw_pc = detection_results
-                    detections = []
-                    inference_time = 0.0
-                    model_name = 'Legacy'
+                    # Single frame detection for EMA and Rolling methods
+                    detection_results = self._infer(detection_frame, cfg)
+                    print(f"🔍 Detection results: {detection_results if isinstance(detection_results, dict) else f'count={detection_results}'}")
+                    
+                    if isinstance(detection_results, dict):
+                        raw_pc = detection_results.get('people_count', 0)
+                        detections = detection_results.get('detections', [])
+                        inference_time = detection_results.get('inference_time', 0.0)
+                        model_name = detection_results.get('model_name', 'Unknown')
+                    else:
+                        raw_pc = detection_results
+                        detections = []
+                        inference_time = 0.0
+                        model_name = 'Legacy'
                 
                 # Apply tracking if enabled
                 tracker_cfg = (cfg or {}).get("tracker", {}) or {}
@@ -930,9 +963,12 @@ class SharedState:
                     self.people_count = final_count
                     self.wait_time = wait_seconds
                     
+                    # Get stabilization method for debug output
+                    stab_method = (cfg or {}).get("count_stabilization", {}).get("method", "EMA")
+                    
                     print(f"📊 DETECTION UPDATE:")
                     print(f"   Raw count: {raw_pc}")
-                    print(f"   Stabilized: {st_pc}")
+                    print(f"   Stabilized ({stab_method}): {st_pc}")
                     print(f"   Final count: {final_count}")
                     print(f"   Wait time: {wait_seconds:.1f}s")
                     
