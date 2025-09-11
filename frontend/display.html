@@ -206,11 +206,8 @@
       const minutes = Math.floor(seconds / 60);
       const remainingSeconds = Math.floor(seconds % 60);
       
-      if (minutes === 0) {
-        return `${remainingSeconds} SEC`;
-      } else {
-        return `${minutes} MIN ${remainingSeconds} SEC`;
-      }
+      // Always show both minutes and seconds, even when minutes is 0
+      return `${minutes} MIN ${remainingSeconds} SEC`;
     }
     
     // Apply color-coded wait time band - exact logic from main app
