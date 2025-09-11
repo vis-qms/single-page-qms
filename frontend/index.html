@@ -286,7 +286,7 @@
       <div class="preview">
         <div style="position:relative;width:100%;height:100%;">
           <img id="previewImg" src="/preview.mjpg?mode=direct&fps=20&q=70&width=960" 
-               style="width:100%;height:100%;object-fit:cover;display:block;" 
+               style="width:100%;height:100%;object-fit:contain;display:block;" 
                alt="Camera Preview" />
           <canvas id="polyCanvas" style="position:absolute;left:0;top:0;width:100%;height:100%;"></canvas>
         </div>
@@ -605,16 +605,57 @@
       drawPoly();
     }
 
-    function normToPx(pt) {
+    function getImageDisplayArea() {
+      const canvas = document.getElementById("polyCanvas");
+      const img = document.getElementById("previewImg");
       const rect = canvas.getBoundingClientRect();
-      return { x: pt.x * rect.width, y: pt.y * rect.height };
+      
+      // If image not loaded yet, use container dimensions
+      if (!img.naturalWidth || !img.naturalHeight) {
+        return {
+          displayWidth: rect.width,
+          displayHeight: rect.height,
+          offsetX: 0,
+          offsetY: 0
+        };
+      }
+      
+      // Calculate actual displayed image area with object-fit:contain
+      const imgAspect = img.naturalWidth / img.naturalHeight;
+      const containerAspect = rect.width / rect.height;
+      
+      let displayWidth, displayHeight, offsetX = 0, offsetY = 0;
+      
+      if (imgAspect > containerAspect) {
+        // Image is wider - width fills container, height has letterboxing
+        displayWidth = rect.width;
+        displayHeight = rect.width / imgAspect;
+        offsetY = (rect.height - displayHeight) / 2;
+      } else {
+        // Image is taller - height fills container, width has letterboxing
+        displayHeight = rect.height;
+        displayWidth = rect.height * imgAspect;
+        offsetX = (rect.width - displayWidth) / 2;
+      }
+      
+      return { displayWidth, displayHeight, offsetX, offsetY };
+    }
+
+    function normToPx(pt) {
+      const area = getImageDisplayArea();
+      
+      
+      return { 
+        x: pt.x * area.displayWidth + area.offsetX, 
+        y: pt.y * area.displayHeight + area.offsetY 
+      };
     }
 
     function pxToNorm(x, y) {
-      const rect = canvas.getBoundingClientRect();
+      const area = getImageDisplayArea();
       return { 
-        x: Math.max(0, Math.min(1, x / rect.width)), 
-        y: Math.max(0, Math.min(1, y / rect.height)) 
+        x: Math.max(0, Math.min(1, (x - area.offsetX) / area.displayWidth)), 
+        y: Math.max(0, Math.min(1, (y - area.offsetY) / area.displayHeight)) 
       };
     }
 
@@ -948,7 +989,13 @@
         $("poly_enabled").value = String(cfg.polygon_cropping?.enabled ?? false);
         $("polygon_points_count").value = cfg.polygon_cropping?.points_count ?? 4;
         $("poly_points").value = JSON.stringify(cfg.polygon_cropping?.points || [], null, 2);
-        loadPolyFromTextarea();
+        
+        // Wait for image to be loaded before drawing polygon
+        const img = document.getElementById("previewImg");
+        if (img.naturalWidth && img.naturalHeight) {
+          loadPolyFromTextarea();
+        }
+        // If image not loaded yet, loadPolyFromTextarea will be called by the image load handler
         
         // Tracking
         $("tracker_enabled").value = String(cfg.tracker?.enabled ?? false);
@@ -1133,6 +1180,16 @@
     $("loadFromFile").addEventListener("click", loadFromFile);
     $("startBtn").addEventListener("click", startDetection);
     $("stopBtn").addEventListener("click", stopDetection);
+
+    // Image load handler to ensure polygon redraws when image loads
+    const previewImg = document.getElementById("previewImg");
+    previewImg.addEventListener("load", () => {
+      // Redraw polygon with correct dimensions
+      setTimeout(() => {
+        loadPolyFromTextarea();
+        drawPoly();
+      }, 100);
+    });
 
     // Initialize
     loadConfig();

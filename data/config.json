@@ -26,8 +26,8 @@
     "crop_top": 0,
     "crop_right": 100,
     "crop_bottom": 100,
-    "per_person_time_min": 22,
-    "per_person_time_max": 26,
+    "per_person_time_min": 32,
+    "per_person_time_max": 35,
     "people_adjustment": 0,
     "selected_model": "YOLOv8m",
     "use_tta": false,
@@ -49,24 +49,24 @@
     "max_delta_per_detection": 1
   },
   "polygon_cropping": {
-    "enabled": true,
+    "enabled": false,
     "points_count": 4,
     "points": [
       {
-        "x": 0.2831370954326168,
-        "y": 0.1140625
-      },
-      {
-        "x": 0.7634239662852812,
-        "y": 0.1171875
-      },
-      {
-        "x": 0.758692075932053,
-        "y": 0.8890625
-      },
-      {
         "x": 0.25237980813663335,
-        "y": 0.9078125
+        "y": 0.19926207977260638
+      },
+      {
+        "x": 0.6758839947505592,
+        "y": 0.17823145598048096
+      },
+      {
+        "x": 0.6806158851037873,
+        "y": 0.8638297916037699
+      },
+      {
+        "x": 0.25711169848986154,
+        "y": 0.7797072964352681
       }
     ]
   },

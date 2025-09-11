@@ -244,11 +244,13 @@
         const labelFontSize = displayConfig.label_font_size || 1.0;
         const valueFontSize = displayConfig.value_font_size || 1.0;
         
-        console.log('Font size config:', { gateFontSize, labelFontSize, valueFontSize });
+        // Temporarily add debug logging
+        console.log('🎨 Display config received:', displayConfig);
+        console.log('🎨 Font sizes applied:', { gateFontSize, labelFontSize, valueFontSize });
         
-        document.documentElement.style.setProperty('--gate-font-size', gateFontSize);
-        document.documentElement.style.setProperty('--label-font-size', labelFontSize);
-        document.documentElement.style.setProperty('--value-font-size', valueFontSize);
+        document.documentElement.style.setProperty('--gate-font-size', String(gateFontSize));
+        document.documentElement.style.setProperty('--label-font-size', String(labelFontSize));
+        document.documentElement.style.setProperty('--value-font-size', String(valueFontSize));
         
         // Update gate header - exact format from main app
         const gateName = data.gate_name || "GATE";

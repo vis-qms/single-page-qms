@@ -369,6 +369,7 @@ async def websocket_status(websocket: WebSocket):
                     "average_inference_time": STATE.average_inference_time,
                     "model": cfg.get("runtime", {}).get("selected_model", "YOLOv11x"),
                     "confidence": cfg.get("runtime", {}).get("confidence_threshold", 0.5),
+                    "display_config": cfg.get("display_config", {}),
                     "timestamp": time.time()
                 }
             

@@ -303,10 +303,17 @@ class SharedState:
         pixel_points = []
         for p in polygon_points:
             try:
-                # EXACT SAME as frontend normToPx function: pt.x * rect.width, pt.y * rect.height
-                x = int(float(p["x"]) * w)
-                y = int(float(p["y"]) * h)
+                # Use proper rounding to match frontend exactly
+                # Frontend uses: pt.x * rect.width, pt.y * rect.height
+                x_raw = float(p["x"]) * w
+                y_raw = float(p["y"]) * h
+                x = round(x_raw)
+                y = round(y_raw)
+                # Don't clamp to w-1, h-1 - allow full range like frontend
+                x = max(0, min(w, x))
+                y = max(0, min(h, y))
                 pixel_points.append([x, y])
+                
             except Exception as e:
                 print(f"❌ Error parsing polygon point {p}: {e}")
                 continue
@@ -328,11 +335,11 @@ class SharedState:
             r = max(0, min(100, int(rt.get("crop_right", 100)))) / 100.0
             b = max(0, min(100, int(rt.get("crop_bottom", 100)))) / 100.0
             
-            # Convert to pixel coordinates
-            left = int(w * l)
-            top = int(h * t) 
-            right = int(w * r)
-            bottom = int(h * b)
+            # Convert to pixel coordinates with proper rounding
+            left = round(w * l)
+            top = round(h * t) 
+            right = round(w * r)
+            bottom = round(h * b)
             
             # Clamp to valid bounds
             left = max(0, min(left, w))
@@ -379,7 +386,7 @@ class SharedState:
             t = max(0, min(100, int(rt.get("crop_top", 0)))) / 100.0
             r = max(0, min(100, int(rt.get("crop_right", 100)))) / 100.0
             b = max(0, min(100, int(rt.get("crop_bottom", 100)))) / 100.0
-            x1, y1, x2, y2 = int(w * l), int(h * t), int(w * r), int(h * b)
+            x1, y1, x2, y2 = round(w * l), round(h * t), round(w * r), round(h * b)
             x1 = max(0, min(w - 1, x1))
             x2 = max(0, min(w, x2))
             y1 = max(0, min(h - 1, y1))
