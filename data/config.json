@@ -26,8 +26,8 @@
     "crop_top": 0,
     "crop_right": 100,
     "crop_bottom": 100,
-    "per_person_time_min": 32,
-    "per_person_time_max": 35,
+    "per_person_time_min": 26,
+    "per_person_time_max": 27,
     "people_adjustment": 0,
     "selected_model": "YOLOv8m",
     "use_tta": false,
@@ -46,7 +46,8 @@
     "method": "Median",
     "avg_window_frames": 3,
     "ema_alpha": 0.65,
-    "max_delta_per_detection": 1
+    "max_delta_per_detection": 1,
+    "median_frame_count": 4
   },
   "polygon_cropping": {
     "enabled": false,
@@ -74,7 +75,7 @@
     "gate_font_size": 1,
     "label_font_size": 1,
     "value_font_size": 1,
-    "hide_people_count": true,
+    "hide_people_count": false,
     "time_format": "minute_range"
   }
 }

@@ -883,12 +883,16 @@ class SharedState:
                 stab_method = (cfg or {}).get("count_stabilization", {}).get("method", "EMA")
                 
                 if stab_method == "Median":
-                    print(f"🔄 Using Median stabilization - processing 3 consecutive frames...")
+                    # Get configurable frame count (2-5, default 3)
+                    median_frame_count = int((cfg or {}).get("count_stabilization", {}).get("median_frame_count", 3))
+                    median_frame_count = max(2, min(5, median_frame_count))  # Clamp to 2-5 range
+                    
+                    print(f"🔄 Using Median stabilization - processing {median_frame_count} consecutive frames...")
                     frame_results = []
                     total_inference_time = 0.0
                     
-                    # Process 3 consecutive frames
-                    for i in range(3):
+                    # Process N consecutive frames
+                    for i in range(median_frame_count):
                         # Get a fresh frame for each detection
                         frame_for_detection = self.get_latest_detection_frame()
                         if frame_for_detection is not None:
@@ -910,13 +914,13 @@ class SharedState:
                         # Small delay between frames to get different frames
                         time.sleep(0.033)  # ~30ms for 30fps
                     
-                    # Average the results from 3 frames
+                    # Average the results from N frames
                     raw_pc = int(round(sum(frame_results) / len(frame_results))) if frame_results else 0
                     detections = []  # We don't track individual detections in multi-frame mode
                     inference_time = total_inference_time / len(frame_results) if frame_results else 0.0
-                    model_name = 'Multi-frame'
+                    model_name = f'{median_frame_count}-frame'
                     
-                    print(f"🔍 3-Frame results: {frame_results} → Average: {raw_pc}")
+                    print(f"🔍 {median_frame_count}-Frame results: {frame_results} → Average: {raw_pc}")
                     
                 else:
                     # Single frame detection for EMA and Rolling methods

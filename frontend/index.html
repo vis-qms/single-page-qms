@@ -508,7 +508,7 @@
           <select id="stab_method">
             <option value="EMA" selected>EMA (Exponential Moving Average)</option>
             <option value="Rolling">Rolling Average</option>
-            <option value="Median">Median (3 frame average)</option>
+            <option value="Median">Median Frame Average</option>
           </select></label></div>
         <div><label>EMA Alpha
           <input type="number" step="0.01" min="0.1" max="1.0" id="ema_alpha" value="0.65"/>
@@ -521,6 +521,12 @@
         <div><label>Max Δ per Detection
           <input type="number" id="max_delta_per_detection" value="1" min="0" max="10"/>
         </label></div>
+      </div>
+      <div class="row" id="medianFrameCountRow" style="display: none;">
+        <div><label>Median Frame Count (2-5 frames)
+          <input type="number" id="median_frame_count" value="3" min="2" max="5"/>
+        </label></div>
+        <div><div class="muted" style="margin-top: 8px;">Number of consecutive frames to average for Median Frame Average method</div></div>
       </div>
     </section>
 
@@ -595,6 +601,13 @@
       $("urlFields").style.display = (type === "Custom URL") ? "block" : "none";
     }
     $("connection_type").addEventListener("change", showConnFields);
+
+    // Stabilization method field visibility
+    function showStabilizationFields() {
+      const method = $("stab_method").value;
+      $("medianFrameCountRow").style.display = (method === "Median") ? "block" : "none";
+    }
+    $("stab_method").addEventListener("change", showStabilizationFields);
 
     // Polygon editor functionality
     const canvas = document.getElementById("polyCanvas");
@@ -1020,6 +1033,10 @@
         $("ema_alpha").value = cfg.count_stabilization?.ema_alpha ?? 0.65;
         $("avg_window_frames").value = cfg.count_stabilization?.avg_window_frames ?? 3;
         $("max_delta_per_detection").value = cfg.count_stabilization?.max_delta_per_detection ?? 1;
+        $("median_frame_count").value = cfg.count_stabilization?.median_frame_count ?? 3;
+        
+        // Update field visibility based on loaded config
+        showStabilizationFields();
         
         // Wait time
         $("per_person_time_min").value = cfg.runtime?.per_person_time_min ?? 22;
@@ -1094,7 +1111,8 @@
             method: $("stab_method").value,
             avg_window_frames: Number($("avg_window_frames").value),
             ema_alpha: Number($("ema_alpha").value),
-            max_delta_per_detection: Number($("max_delta_per_detection").value)
+            max_delta_per_detection: Number($("max_delta_per_detection").value),
+            median_frame_count: Number($("median_frame_count").value)
           },
           
           polygon_cropping: {
