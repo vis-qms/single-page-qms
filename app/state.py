@@ -127,6 +127,7 @@ class SharedState:
         self.detection_history = deque(maxlen=200)  # Detection history
         self.total_detections = 0
         self.average_inference_time = 0.0
+        self.total_cycle_time = 0.0         # Total detection cycle time
 
         # Runtime states
         self.connected = False
@@ -879,6 +880,9 @@ class SharedState:
             if time_since_last >= det_interval:
                 print(f"🤖 Starting detection inference (interval: {det_interval}s)")
                 
+                # Track total cycle start time
+                cycle_start_time = time.time()
+                
                 # Check if using Median stabilization - run detection on 3 consecutive frames
                 stab_method = (cfg or {}).get("count_stabilization", {}).get("method", "EMA")
                 
@@ -962,10 +966,14 @@ class SharedState:
                 # Calculate wait time
                 wait_seconds = self._estimate_wait(final_count, cfg)
 
+                # Calculate total cycle time
+                total_cycle_time = time.time() - cycle_start_time
+
                 with self.lock:
                     self._raw_people_count = raw_pc
                     self.people_count = final_count
                     self.wait_time = wait_seconds
+                    self.total_cycle_time = total_cycle_time
                     
                     # Get stabilization method for debug output
                     stab_method = (cfg or {}).get("count_stabilization", {}).get("method", "EMA")
@@ -975,6 +983,8 @@ class SharedState:
                     print(f"   Stabilized ({stab_method}): {st_pc}")
                     print(f"   Final count: {final_count}")
                     print(f"   Wait time: {wait_seconds:.1f}s")
+                    print(f"   Per-frame inference: {inference_time*1000:.1f}ms")
+                    print(f"   Total cycle time: {total_cycle_time*1000:.1f}ms")
                     
                     # Update telemetry
                     self.total_detections += 1

@@ -47,7 +47,7 @@
     "avg_window_frames": 3,
     "ema_alpha": 0.65,
     "max_delta_per_detection": 1,
-    "median_frame_count": 4
+    "median_frame_count": 2
   },
   "polygon_cropping": {
     "enabled": false,

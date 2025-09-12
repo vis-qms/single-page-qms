@@ -121,6 +121,7 @@ def api_status():
             "last_error": getattr(STATE, "last_error", None),
             "total_detections": STATE.total_detections,
             "average_inference_time": STATE.average_inference_time,
+            "total_cycle_time": getattr(STATE, "total_cycle_time", 0.0),
             "model": cfg.get("runtime", {}).get("selected_model", "YOLOv11x"),
             "confidence": cfg.get("runtime", {}).get("confidence_threshold", 0.5),
             "display_config": cfg.get("display_config", {})
@@ -367,6 +368,7 @@ async def websocket_status(websocket: WebSocket):
                     "last_error": getattr(STATE, "last_error", None),
                     "total_detections": STATE.total_detections,
                     "average_inference_time": STATE.average_inference_time,
+                    "total_cycle_time": getattr(STATE, "total_cycle_time", 0.0),
                     "model": cfg.get("runtime", {}).get("selected_model", "YOLOv11x"),
                     "confidence": cfg.get("runtime", {}).get("confidence_threshold", 0.5),
                     "display_config": cfg.get("display_config", {}),

@@ -274,8 +274,12 @@
         <span id="totalDetections" class="metric-value">0</span>
       </div>
       <div class="metric">
-        <span>Avg Inference Time</span>
+        <span>Avg Inference Time (per frame)</span>
         <span id="avgInference" class="metric-value">0 ms</span>
+      </div>
+      <div class="metric">
+        <span>Total Detection Cycle Time</span>
+        <span id="totalCycleTime" class="metric-value">0 ms</span>
       </div>
       <div class="muted">Updates every 0.5s from live API</div>
     </section>
@@ -957,6 +961,7 @@
           $("liveWait").textContent = waitMin > 0 ? `${waitMin} min` : "No wait";
           $("totalDetections").textContent = status.total_detections || 0;
           $("avgInference").textContent = `${Math.round((status.average_inference_time || 0) * 1000)} ms`;
+          $("totalCycleTime").textContent = `${Math.round((status.total_cycle_time || 0) * 1000)} ms`;
         }
       } catch(e) {
         console.error("Status update failed:", e);
