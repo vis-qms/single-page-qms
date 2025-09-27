@@ -121,6 +121,10 @@ class SharedState:
         self.last_detection_frame = None    # BGR frame (cropped for detection)
         self.last_frame_ts = 0.0
         
+        # Wait time caching to avoid recalculation when people count is same
+        self._last_wait_people_count = -1   # Track last people count for wait time
+        self._cached_wait_time = 0.0        # Cached wait time for same people count
+        
         # Enhanced features
         self.tracker = None                 # IoU tracker instance
         self.stabilizer = None              # Count stabilizer instance
@@ -652,8 +656,15 @@ class SharedState:
 
     def _estimate_wait(self, count, cfg):
         """
-        Simple wait time estimation using random per-person time (matches main app exactly).
+        Optimized wait time estimation - only recalculate when people count changes.
+        Uses cached wait time when people count is same as last time.
         """
+        # If people count hasn't changed, return cached wait time
+        if count == self._last_wait_people_count:
+            print(f"🕒 Using cached wait time: {self._cached_wait_time}")
+            return self._cached_wait_time
+        
+        # People count changed, calculate new wait time
         rt = (cfg or {}).get("runtime", {}) or {}
         tmin = float(rt.get("per_person_time_min", 22))
         tmax = float(rt.get("per_person_time_max", 26))
@@ -662,8 +673,15 @@ class SharedState:
             if tmax < tmin:
                 tmax = tmin
             per_person_seconds = random.randint(int(tmin), int(tmax))
-            return count * per_person_seconds
-        return 0.0
+            new_wait_time = count * per_person_seconds
+        else:
+            new_wait_time = 0.0
+        
+        # Cache the new values
+        self._last_wait_people_count = count
+        self._cached_wait_time = new_wait_time
+        
+        return new_wait_time
 
     # ---------------- frame capture system (like legacy QMS) ----------------
     
