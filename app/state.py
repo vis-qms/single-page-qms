@@ -9,9 +9,10 @@ import queue
 from collections import deque, OrderedDict
 from typing import Any, Dict, Optional, List
 from datetime import datetime
-
 import cv2
 import numpy as np
+from ultralytics import YOLO
+import torch
 
 CONFIG_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "data", "config.json")
@@ -125,6 +126,13 @@ class SharedState:
         self._last_wait_people_count = -1   # Track last people count for wait time
         self._cached_wait_time = 0.0        # Cached wait time for same people count
         
+        # Debug image saving
+        self.debug_enabled = False          # Enable/disable debug image saving
+        self.debug_probability = 0.1        # Probability (0.0-1.0) to save debug images
+        self.debug_images_saved = 0         # Counter for saved debug images
+        
+        print(f"🐛 DEBUG INIT: enabled={self.debug_enabled}, probability={self.debug_probability}")
+        
         # Enhanced features
         self.tracker = None                 # IoU tracker instance
         self.stabilizer = None              # Count stabilizer instance
@@ -144,6 +152,10 @@ class SharedState:
         self.capture_thread = None          # type: Optional[threading.Thread]
         self.capture_running = False
         self.current_stream_url = None
+        
+        # Consecutive frame buffer for batch inference
+        self.consecutive_frame_buffer = deque(maxlen=10)  # Store last 10 consecutive frames
+        self.frame_buffer_lock = threading.Lock()  # Thread-safe access to frame buffer
 
         # Models + diagnostics
         self.model_cache = {}               # type: Dict[str, Any]
@@ -185,6 +197,16 @@ class SharedState:
 
     def get_config(self):
         with self.lock:
+            # Sync debug settings from config
+            debug_cfg = self.config.get("debug", {})
+            old_enabled = self.debug_enabled
+            old_prob = self.debug_probability
+            self.debug_enabled = bool(debug_cfg.get("enabled", False))
+            self.debug_probability = float(debug_cfg.get("probability", 0.1))
+            
+            if old_enabled != self.debug_enabled or old_prob != self.debug_probability:
+                print(f"🐛 DEBUG CONFIG: enabled={self.debug_enabled}, probability={self.debug_probability}")
+            
             return self.config
 
     def test_connection(self, cfg=None):
@@ -435,25 +457,29 @@ class SharedState:
 
     # ---------------- models ----------------
 
+    def _get_model_params(self, cfg):
+        """Extract common model parameters to avoid duplication"""
+        runtime = (cfg or {}).get("runtime", {}) or {}
+        return {
+            'conf': float(runtime.get("confidence_threshold", 0.5)),
+            'imgsz': int(runtime.get("imgsz", 1280)),
+            'half': bool(runtime.get("half_precision", False)),
+            'use_tta': bool(runtime.get("use_tta", False)),
+            'max_det': int(runtime.get("max_det", 100)),
+            'primary_iou': float(runtime.get("primary_iou", 0.68)),
+            'secondary_iou': float(runtime.get("secondary_iou", 0.70)),
+            'min_height_ratio': float(runtime.get("min_height_ratio", 0.018)),
+            'min_area_ratio': float(runtime.get("min_area_ratio", 0.00015))
+        }
+
     def _infer_ultralytics(self, frame, cfg):
         """
         Enhanced Ultralytics path with advanced detection features.
         Returns detailed detection results with enhanced filtering.
         """
-        from ultralytics import YOLO, RTDETR
-        import torch
-
         runtime = (cfg or {}).get("runtime", {}) or {}
         model_name = str(runtime.get("selected_model", "YOLOv11x"))
-        conf = float(runtime.get("confidence_threshold", 0.5))
-        imgsz = int(runtime.get("imgsz", 1280))
-        half = bool(runtime.get("half_precision", False))
-        use_tta = bool(runtime.get("use_tta", False))
-        max_det = int(runtime.get("max_det", 100))
-        primary_iou = float(runtime.get("primary_iou", 0.68))
-        secondary_iou = float(runtime.get("secondary_iou", 0.70))
-        min_height_ratio = float(runtime.get("min_height_ratio", 0.018))
-        min_area_ratio = float(runtime.get("min_area_ratio", 0.00015))
+        params = self._get_model_params(cfg)
 
         # Enhanced model mapping
         model_files = {
@@ -465,18 +491,14 @@ class SharedState:
             'YOLOv11x': 'yolo11x.pt',
             'YOLOv12l': 'yolo12l.pt',
             'YOLOv12x': 'yolo12x.pt',
-            'RT-DETR-X': 'rtdetr-x.pt'
         }
         
         model_file = model_files.get(model_name, f"{model_name}.pt")
-        key = f"ultra::{model_file}::{half}"
+        key = f"ultra::{model_file}::{params['half']}"
         
         if key not in self.model_cache:
             try:
-                if "RT-DETR" in model_name.upper():
-                    self.model_cache[key] = RTDETR(model_file)
-                else:
-                    self.model_cache[key] = YOLO(model_file)
+                self.model_cache[key] = YOLO(model_file)
             except Exception:
                 self.model_cache[key] = YOLO("yolov8m.pt")  # fallback
                 
@@ -491,21 +513,21 @@ class SharedState:
         with torch.inference_mode():
             results = model.predict(
                 source=frame, 
-                imgsz=imgsz, 
-                conf=conf, 
-                iou=primary_iou,  # Primary IoU for model's NMS
-                half=half, 
+                imgsz=params['imgsz'], 
+                conf=params['conf'], 
+                iou=params['primary_iou'],  # Primary IoU for model's NMS
+                half=params['half'], 
                 verbose=False,
                 classes=[0],  # person only
-                max_det=max_det,
-                augment=use_tta
+                max_det=params['max_det'],
+                augment=params['use_tta']
             )
         
         inference_time = time.time() - start_time
         h, w = frame.shape[:2]
         img_area = float(max(1, h * w))
-        min_h = max(1.0, h * min_height_ratio)
-        min_area = max(1.0, img_area * min_area_ratio)
+        min_h = max(1.0, h * params['min_height_ratio'])
+        min_area = max(1.0, img_area * params['min_area_ratio'])
         
         # Get polygon ROI if enabled
         poly = (cfg or {}).get("polygon_cropping", {}) or {}
@@ -562,7 +584,7 @@ class SharedState:
         detections.sort(key=lambda d: d['confidence'], reverse=True)
         kept = []
         for cand in detections:
-            if all(_iou(cand, k) < secondary_iou for k in kept):
+            if all(_iou(cand, k) < params['secondary_iou'] for k in kept):
                 kept.append(cand)
         
         return {
@@ -572,45 +594,6 @@ class SharedState:
             'model_name': model_name
         }
 
-    def _infer_transformers_detr(self, frame, cfg):
-        """
-        HuggingFace Transformers DETR (facebook/detr-resnet-50).
-        Returns number of 'person' label (id=1 in post-processed results).
-        """
-        import torch
-        from transformers import DetrImageProcessor, DetrForObjectDetection
-
-        runtime = (cfg or {}).get("runtime", {}) or {}
-        conf = float(runtime.get("confidence_threshold", 0.5))
-
-        key = "transformers::detr-resnet-50"
-        if key not in self.model_cache:
-            proc = DetrImageProcessor.from_pretrained("facebook/detr-resnet-50")
-            det = DetrForObjectDetection.from_pretrained("facebook/detr-resnet-50")
-            self.model_cache[key] = (proc, det)
-
-        processor, model = self.model_cache[key]
-
-        # BGR -> RGB
-        rgb = frame[:, :, ::-1]
-        inputs = processor(images=rgb, return_tensors="pt")
-        with torch.no_grad():
-            outputs = model(**inputs)
-
-        target_sizes = torch.tensor([rgb.shape[:2]])
-        results = processor.post_process_object_detection(
-            outputs, target_sizes=target_sizes, threshold=conf
-        )[0]
-
-        people = 0
-        for score, label in zip(results["scores"], results["labels"]):
-            try:
-                if int(label.item()) == 1:  # COCO person
-                    people += 1
-            except Exception:
-                pass
-
-        return people
 
     def _infer(self, frame, cfg):
         """
@@ -619,15 +602,182 @@ class SharedState:
         runtime = (cfg or {}).get("runtime", {}) or {}
         model_name = str(runtime.get("selected_model", "YOLOv11x")).lower()
         try:
-            if ("transformers" in model_name) and ("detr" in model_name):
-                self.last_error = None
-                return self._infer_transformers_detr(frame, cfg)
             self.last_error = None
             return self._infer_ultralytics(frame, cfg)
         except Exception as e:
             self.last_error = "{}: {}".format(type(e).__name__, e)
             # heuristic fallback to avoid crashing UI
             return int(np.mean(frame) / 32)
+
+    def _infer_batch(self, frame_list, cfg):
+        """
+        Batch inference for multiple consecutive frames.
+        Much more efficient than individual frame inference.
+        """
+        if not frame_list:
+            return []
+            
+        runtime = (cfg or {}).get("runtime", {}) or {}
+        model_name = str(runtime.get("selected_model", "YOLOv11x"))
+        params = self._get_model_params(cfg)
+        
+        print(f"🚀 BATCH INFERENCE: Processing {len(frame_list)} consecutive frames with {model_name}")
+        
+        try:
+        
+            # Get model from cache
+            model_files = {
+                'YOLOv8m': 'yolov8m.pt',
+                'YOLOv8x': 'yolov8x.pt', 
+                'YOLOv9e': 'yolov9e.pt',
+                'YOLOv10x': 'yolov10x.pt',
+                'YOLOv11l': 'yolo11l.pt',
+                'YOLOv11x': 'yolo11x.pt',
+                'YOLOv12l': 'yolo12l.pt',
+                'YOLOv12x': 'yolo12x.pt',
+            }
+            
+            model_file = model_files.get(model_name, f"{model_name}.pt")
+            key = f"ultra::{model_file}::{params['half']}"
+            
+            if key not in self.model_cache:
+                try:
+                    self.model_cache[key] = YOLO(model_file)
+                except Exception:
+                    self.model_cache[key] = YOLO("yolov8m.pt")  # fallback
+                    
+            model = self.model_cache[key]
+            
+            # Batch inference - MUCH faster than individual calls
+            start_time = time.time()
+            with torch.inference_mode():
+                results = model.predict(
+                    source=frame_list,  # List of frames for batch processing
+                    imgsz=params['imgsz'], 
+                    conf=params['conf'], 
+                    iou=params['primary_iou'],
+                    half=params['half'], 
+                    verbose=False,
+                    classes=[0],  # person only
+                    max_det=params['max_det'],
+                    augment=params['use_tta']
+                )
+            
+            batch_inference_time = time.time() - start_time
+            avg_inference_time = batch_inference_time / len(frame_list)
+            
+            print(f"🚀 BATCH: {len(frame_list)} frames in {batch_inference_time*1000:.1f}ms (avg: {avg_inference_time*1000:.1f}ms/frame)")
+            
+            # Process batch results
+            batch_results = []
+            for i, (result, frame) in enumerate(zip(results, frame_list)):
+                h, w = frame.shape[:2]
+                img_area = float(max(1, h * w))
+                min_h = max(1.0, h * params['min_height_ratio'])
+                min_area = max(1.0, img_area * params['min_area_ratio'])
+                
+                # Get polygon ROI if enabled
+                poly = (cfg or {}).get("polygon_cropping", {}) or {}
+                roi_polygon = None
+                if bool(poly.get("enabled", False)):
+                    pts = poly.get("points") or []
+                    if len(pts) >= 3:
+                        pixel_points = self._polygon_points_to_pixels(pts, w, h)
+                        roi_polygon = [(pt[0], pt[1]) for pt in pixel_points]
+                
+                def _inside_roi_center(bbox, polygon):
+                    if not polygon:
+                        return True
+                    cx = int((bbox[0] + bbox[2]) * 0.5)
+                    cy = int((bbox[1] + bbox[3]) * 0.5)
+                    poly_np = np.array(polygon, dtype=np.int32).reshape(-1, 1, 2)
+                    return cv2.pointPolygonTest(poly_np, (cx, cy), False) >= 0
+                
+                detections = []
+                for b in getattr(result, 'boxes', []) or []:
+                    xyxy = b.xyxy[0].tolist()
+                    score = float(b.conf[0].item())
+                    x1, y1, x2, y2 = map(float, xyxy)
+                    
+                    # Apply enhanced filters
+                    if (y2 - y1) < min_h:
+                        continue
+                    if (x2 - x1) * (y2 - y1) < min_area:
+                        continue
+                    if not _inside_roi_center([x1, y1, x2, y2], roi_polygon):
+                        continue
+                        
+                    detections.append({
+                        'bbox': [int(x1), int(y1), int(x2), int(y2)],
+                        'confidence': score
+                    })
+                
+                # Secondary IoU suppression
+                def _iou(a, b):
+                    ax1, ay1, ax2, ay2 = a['bbox']
+                    bx1, by1, bx2, by2 = b['bbox']
+                    inter_x1 = max(ax1, bx1)
+                    inter_y1 = max(ay1, by1)
+                    inter_x2 = min(ax2, bx2)
+                    inter_y2 = min(ay2, by2)
+                    inter = max(0, inter_x2 - inter_x1) * max(0, inter_y2 - inter_y1)
+                    area_a = max(0, ax2-ax1) * max(0, ay2-ay1)
+                    area_b = max(0, bx2-bx1) * max(0, by2-by1)
+                    union = area_a + area_b - inter + 1e-6
+                    return inter / union
+                
+                detections.sort(key=lambda d: d['confidence'], reverse=True)
+                kept = []
+                for cand in detections:
+                    if all(_iou(cand, k) < params['secondary_iou'] for k in kept):
+                        kept.append(cand)
+                
+                batch_results.append({
+                    'people_count': len(kept),
+                    'detections': kept,
+                    'inference_time': avg_inference_time,
+                    'model_name': model_name,
+                    'frame_index': i
+                })
+                
+                print(f"   Frame {i+1}: {len(kept)} people detected")
+            
+            return batch_results
+            
+        except Exception as e:
+            print(f"❌ Batch inference error: {e}")
+            # Fallback to individual inference
+            batch_results = []
+            for i, frame in enumerate(frame_list):
+                result = self._infer(frame, cfg)
+                if isinstance(result, dict):
+                    batch_results.append({
+                        'people_count': result.get('people_count', 0),
+                        'detections': result.get('detections', []),
+                        'inference_time': result.get('inference_time', 0.0),
+                        'model_name': result.get('model_name', 'Fallback'),
+                        'frame_index': i
+                    })
+                else:
+                    batch_results.append({
+                        'people_count': result if isinstance(result, int) else 0,
+                        'detections': [],
+                        'inference_time': 0.0,
+                        'model_name': 'Legacy',
+                        'frame_index': i
+                    })
+            return batch_results
+
+    def get_consecutive_frames(self, n=5):
+        """Get N most recent consecutive frames from buffer"""
+        with self.frame_buffer_lock:
+            if len(self.consecutive_frame_buffer) >= n:
+                # Get last N frames
+                recent_frames = list(self.consecutive_frame_buffer)[-n:]
+                return [frame_data['frame'] for frame_data in recent_frames], recent_frames
+            else:
+                print(f"⚠️  Only {len(self.consecutive_frame_buffer)} frames available, need {n}")
+                return [], []
 
     # ---------------- stabilization & wait-time ----------------
 
@@ -682,6 +832,115 @@ class SharedState:
         self._cached_wait_time = new_wait_time
         
         return new_wait_time
+
+    # ---------------- debug image saving ----------------
+    
+    def _ensure_debug_folders(self, detection_session_name):
+        """Create debug folders for session-specific structure"""
+        debug_dir = os.path.join(os.path.dirname(__file__), "..", "debug_images")
+        
+        # Create session-specific folder structure
+        session_dir = os.path.join(debug_dir, detection_session_name)
+        input_dir = os.path.join(session_dir, "input")
+        output_dir = os.path.join(session_dir, "output")
+        
+        print(f"🐛 DEBUG: Creating folders at {debug_dir}")
+        print(f"🐛 DEBUG: Input dir: {input_dir}")
+        print(f"🐛 DEBUG: Output dir: {output_dir}")
+        
+        os.makedirs(input_dir, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
+        
+        print(f"🐛 DEBUG: Folders created successfully")
+        return input_dir, output_dir
+    
+    def _draw_bounding_boxes(self, image, detections, model_name=""):
+        """Draw bounding boxes on image for debug visualization"""
+        if not detections:
+            return image
+            
+        debug_image = image.copy()
+        
+        for i, detection in enumerate(detections):
+            bbox = detection.get('bbox', [])
+            confidence = detection.get('confidence', 0.0)
+            
+            if len(bbox) >= 4:
+                x1, y1, x2, y2 = map(int, bbox)
+                
+                # Draw bounding box (green color)
+                cv2.rectangle(debug_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                
+                # Draw confidence score
+                label = f"Person {i+1}: {confidence:.2f}"
+                label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
+                
+                # Background rectangle for text
+                cv2.rectangle(debug_image, (x1, y1 - label_size[1] - 10), 
+                            (x1 + label_size[0], y1), (0, 255, 0), -1)
+                
+                # Text
+                cv2.putText(debug_image, label, (x1, y1 - 5), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+        
+        # Add summary text
+        summary = f"Model: {model_name} | Count: {len(detections)}"
+        cv2.putText(debug_image, summary, (10, 30), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        
+        return debug_image
+    
+    def _save_debug_session(self, frames_data, final_people_count, model_name=""):
+        """Save all frames from a detection session in organized folders"""
+        print(f"🐛 DEBUG SESSION: enabled={self.debug_enabled}, final_count={final_people_count}, frames={len(frames_data)}")
+        
+        if not self.debug_enabled:
+            print(f"🐛 DEBUG: Not enabled, skipping session")
+            return
+            
+        if final_people_count <= 0:
+            print(f"🐛 DEBUG: No people in final count ({final_people_count}), skipping session")
+            return
+            
+        # Check probability once for the entire session
+        rand_val = random.random()
+        print(f"🐛 DEBUG: Session probability check: {rand_val:.3f} vs {self.debug_probability:.3f}")
+        if rand_val > self.debug_probability:
+            print(f"🐛 DEBUG: Session probability check failed, skipping")
+            return
+            
+        try:
+            # Create session folder name
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+            session_name = f"detection_{self.debug_images_saved+1:03d}_count_{final_people_count}_{timestamp}"
+            
+            input_dir, output_dir = self._ensure_debug_folders(session_name)
+            
+            # Save all frames in the session
+            for i, frame_data in enumerate(frames_data):
+                frame = frame_data['frame']
+                detections = frame_data['detections']
+                people_count = frame_data['people_count']
+                
+                # Save input image
+                input_filename = f"frame_{i+1}.jpg"
+                input_path = os.path.join(input_dir, input_filename)
+                cv2.imwrite(input_path, frame)
+                
+                # Save output image with bounding boxes
+                output_image = self._draw_bounding_boxes(frame, detections, f"{model_name}_frame_{i+1}")
+                output_filename = f"frame_{i+1}.jpg"
+                output_path = os.path.join(output_dir, output_filename)
+                cv2.imwrite(output_path, output_image)
+                
+                print(f"   Saved frame {i+1}: {people_count} people")
+            
+            self.debug_images_saved += 1
+            print(f"🐛 DEBUG: Saved debug session #{self.debug_images_saved} with {len(frames_data)} frames")
+            print(f"   Session folder: {session_name}")
+            
+        except Exception as e:
+            print(f"❌ Error saving debug session: {e}")
 
     # ---------------- frame capture system (like legacy QMS) ----------------
     
@@ -778,6 +1037,14 @@ class SharedState:
                                 self.last_frame = display_frame.copy()  # For preview
                                 self.last_detection_frame = detection_frame.copy()  # For AI
                                 self.last_frame_ts = time.time()
+                                
+                            # Add frame to consecutive buffer for batch inference
+                            with self.frame_buffer_lock:
+                                self.consecutive_frame_buffer.append({
+                                    'frame': detection_frame.copy(),
+                                    'timestamp': time.time(),
+                                    'frame_id': len(self.consecutive_frame_buffer)
+                                })
                                 
                         except queue.Full:
                             # Queue full - skip this frame (legacy QMS behavior)
@@ -909,40 +1176,64 @@ class SharedState:
                     median_frame_count = int((cfg or {}).get("count_stabilization", {}).get("median_frame_count", 3))
                     median_frame_count = max(2, min(5, median_frame_count))  # Clamp to 2-5 range
                     
-                    print(f"🔄 Using Median stabilization - processing {median_frame_count} consecutive frames...")
-                    frame_results = []
-                    total_inference_time = 0.0
+                    print(f"🔄 Using BATCH Median stabilization - processing {median_frame_count} consecutive frames...")
                     
-                    # Process N consecutive frames
-                    for i in range(median_frame_count):
-                        # Get a fresh frame for each detection
-                        frame_for_detection = self.get_latest_detection_frame()
-                        if frame_for_detection is not None:
-                            result = self._infer(frame_for_detection, cfg)
-                            if isinstance(result, dict):
-                                frame_results.append(result.get('people_count', 0))
-                                total_inference_time += result.get('inference_time', 0.0)
-                                print(f"   Frame {i+1}: {result.get('people_count', 0)} people (inference: {result.get('inference_time', 0.0)*1000:.1f}ms)")
-                            else:
-                                frame_results.append(result)
-                                print(f"   Frame {i+1}: {result} people")
-                        else:
-                            print(f"   Frame {i+1}: No frame available")
-                            if frame_results:  # Use last result if no frame available
-                                frame_results.append(frame_results[-1])
-                            else:
-                                frame_results.append(0)
+                    # Get truly consecutive frames from buffer
+                    frame_list, frame_metadata = self.get_consecutive_frames(median_frame_count)
+                    
+                    if frame_list:
+                        # Batch inference on consecutive frames - MUCH faster!
+                        batch_results = self._infer_batch(frame_list, cfg)
                         
-                        # Small delay between frames to get different frames
-                        time.sleep(0.033)  # ~30ms for 30fps
-                    
-                    # Average the results from N frames
-                    raw_pc = int(round(sum(frame_results) / len(frame_results))) if frame_results else 0
-                    detections = []  # We don't track individual detections in multi-frame mode
-                    inference_time = total_inference_time / len(frame_results) if frame_results else 0.0
-                    model_name = f'{median_frame_count}-frame'
-                    
-                    print(f"🔍 {median_frame_count}-Frame results: {frame_results} → Average: {raw_pc}")
+                        # Extract people counts and calculate average
+                        frame_results = [result['people_count'] for result in batch_results]
+                        total_inference_time = sum(result['inference_time'] for result in batch_results)
+                        
+                        # Calculate average people count
+                        raw_pc = int(round(sum(frame_results) / len(frame_results))) if frame_results else 0
+                        inference_time = total_inference_time / len(frame_results) if frame_results else 0.0
+                        model_name = f'{median_frame_count}-frame-batch'
+                        
+                        print(f"🔍 BATCH {median_frame_count}-Frame results: {frame_results} → Average: {raw_pc}")
+                        
+                        # Prepare frames for debug saving (with actual detections from batch)
+                        frames_for_debug = []
+                        for i, (result, frame_data) in enumerate(zip(batch_results, frame_metadata)):
+                            frames_for_debug.append({
+                                'frame': frame_data['frame'].copy(),
+                                'detections': result['detections'],
+                                'people_count': result['people_count'],
+                                'inference_time': result['inference_time']
+                            })
+                        
+                        # Save debug session with all frames
+                        if frames_for_debug:
+                            self._save_debug_session(frames_for_debug, raw_pc, model_name)
+                        
+                        # Use empty detections list for median mode (we don't track individual detections)
+                        detections = []
+                        
+                    else:
+                        print("⚠️  Not enough consecutive frames in buffer, falling back to single frame")
+                        # Fallback to single frame detection
+                        detection_frame = self.get_latest_detection_frame()
+                        if detection_frame is not None:
+                            result = self._infer(detection_frame, cfg)
+                            if isinstance(result, dict):
+                                raw_pc = result.get('people_count', 0)
+                                detections = result.get('detections', [])
+                                inference_time = result.get('inference_time', 0.0)
+                                model_name = 'single-frame-fallback'
+                            else:
+                                raw_pc = result if isinstance(result, int) else 0
+                                detections = []
+                                inference_time = 0.0
+                                model_name = 'legacy-fallback'
+                        else:
+                            raw_pc = 0
+                            detections = []
+                            inference_time = 0.0
+                            model_name = 'no-frame'
                     
                 else:
                     # Single frame detection for EMA and Rolling methods
@@ -954,11 +1245,15 @@ class SharedState:
                         detections = detection_results.get('detections', [])
                         inference_time = detection_results.get('inference_time', 0.0)
                         model_name = detection_results.get('model_name', 'Unknown')
+                        
+                        # Debug images are now saved via batch system in median mode
                     else:
                         raw_pc = detection_results
                         detections = []
                         inference_time = 0.0
                         model_name = 'Legacy'
+                        
+                        # Debug images are now saved via batch system in median mode
                 
                 # Apply tracking if enabled
                 tracker_cfg = (cfg or {}).get("tracker", {}) or {}
@@ -1026,10 +1321,6 @@ class SharedState:
                     self.detection_history.append(detection_record)
 
                 last_det = now
-
-            # LEGACY QMS OPTIMIZATION: Minimal sleep for maximum responsiveness
-            # Fast loop that doesn't block, always processes latest frames
-            time.sleep(0.02)  # Much shorter sleep (50 FPS loop) for better responsiveness
 
 
 STATE = SharedState()

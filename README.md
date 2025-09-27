@@ -187,7 +187,7 @@ python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ### URL Parameters
 - `?ws=true` - Enable WebSocket updates
-- `?refresh=500` - Polling interval (ms)
+- `?refresh=1000` - Polling interval (ms)
 - `?size=large` - Display size preset
 
 ### Theme Options

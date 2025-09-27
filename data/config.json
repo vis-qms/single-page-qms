@@ -15,21 +15,21 @@
     "webcam_index": 0
   },
   "runtime": {
-    "frame_read_fps": 30,
+    "frame_read_fps": 60,
     "detection_interval": 0.1,
     "half_precision": false,
     "image_quality": "High (Sharp)",
-    "confidence_threshold": 0.5,
+    "confidence_threshold": 0.7,
     "imgsz": 1280,
     "enable_cropping": false,
     "crop_left": 0,
     "crop_top": 0,
     "crop_right": 100,
     "crop_bottom": 100,
-    "per_person_time_min": 26,
-    "per_person_time_max": 27,
+    "per_person_time_min": 30,
+    "per_person_time_max": 35,
     "people_adjustment": 0,
-    "selected_model": "YOLOv8m",
+    "selected_model": "YOLOv12x",
     "use_tta": false,
     "max_det": 100,
     "primary_iou": 0.68,
@@ -47,27 +47,27 @@
     "avg_window_frames": 3,
     "ema_alpha": 0.65,
     "max_delta_per_detection": 1,
-    "median_frame_count": 2
+    "median_frame_count": 5
   },
   "polygon_cropping": {
-    "enabled": false,
+    "enabled": true,
     "points_count": 4,
     "points": [
       {
-        "x": 0.25474575331324745,
-        "y": 0.131964083637805
+        "x": 0.19204820613297352,
+        "y": 0.06045996274457856
       },
       {
-        "x": 0.7137391175763849,
-        "y": 0.15720083218835554
+        "x": 0.908929594647049,
+        "y": 0.022604839918752784
       },
       {
-        "x": 0.6806158851037873,
-        "y": 0.8638297916037699
+        "x": 0.8852701428809079,
+        "y": 0.9353339124969964
       },
       {
-        "x": 0.25711169848986154,
-        "y": 0.7797072964352681
+        "x": 0.16129091883699007,
+        "y": 0.9395400372554215
       }
     ]
   },
@@ -77,5 +77,9 @@
     "value_font_size": 1,
     "hide_people_count": false,
     "time_format": "minute_range"
+  },
+  "debug": {
+    "enabled": true,
+    "probability": 0.95
   }
 }

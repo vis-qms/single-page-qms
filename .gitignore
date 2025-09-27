@@ -122,3 +122,5 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+debug_images/

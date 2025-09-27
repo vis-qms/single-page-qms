@@ -198,6 +198,18 @@
       max-height: 1000px;
     }
     
+    /* Debug section styling */
+    .debug-info {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    
+    .debug-info small {
+      color: #9399b2;
+      font-style: italic;
+    }
+
     /* Responsive design */
     @media (max-width: 768px) {
       main {
@@ -226,7 +238,7 @@
       <button id="save" class="btn-primary">Save Config</button>
       <button id="saveToFile" class="btn-secondary">Save to File</button>
       <button id="loadFromFile" class="btn-secondary">Load from File</button>
-      <a href="/display?ws=true&refresh=500" target="_blank" style="color:#9CC2FF;text-decoration:none;">🖥️ Open Display</a>
+      <a href="/display?ws=true&refresh=1000" target="_blank" style="color:#9CC2FF;text-decoration:none;">🖥️ Open Display</a>
       <span id="saveStatus" class="muted"></span>
     </div>
   </header>
@@ -281,7 +293,7 @@
         <span>Total Detection Cycle Time</span>
         <span id="totalCycleTime" class="metric-value">0 ms</span>
       </div>
-      <div class="muted">Updates every 0.5s from live API</div>
+      <div class="muted">Updates every 1s from live API</div>
     </section>
 
     <!-- Live Preview -->
@@ -544,6 +556,27 @@
         <div><label>Beta-Optimizer-Activation
           <input type="number" id="per_person_time_max" value="26" min="5" max="120"/>
         </label></div>
+      </div>
+    </section>
+
+    <!-- Debug Configuration -->
+    <section class="card">
+      <h2>🐛 Debug Configuration</h2>
+      <div class="row">
+        <div><label>Enable Debug Image Saving
+          <select id="debug_enabled">
+            <option value="false">Disabled</option>
+            <option value="true">Enabled</option>
+          </select></label></div>
+        <div><label>Debug Save Probability (%)
+          <input type="number" step="1" min="1" max="100" id="debug_probability" value="10" />
+        </label></div>
+      </div>
+      <div class="row">
+        <div class="debug-info">
+          <span>Debug images saved: <strong id="debug_images_saved">0</strong></span>
+          <small>Images are saved to: debug_images/input/ and debug_images/output/</small>
+        </div>
       </div>
     </section>
 
@@ -962,6 +995,11 @@
           $("totalDetections").textContent = status.total_detections || 0;
           $("avgInference").textContent = `${Math.round((status.average_inference_time || 0) * 1000)} ms`;
           $("totalCycleTime").textContent = `${Math.round((status.total_cycle_time || 0) * 1000)} ms`;
+          
+          // Update debug info
+          if (status.debug) {
+            $("debug_images_saved").textContent = status.debug.images_saved || 0;
+          }
         }
       } catch(e) {
         console.error("Status update failed:", e);
@@ -1046,6 +1084,10 @@
         // Wait time
         $("per_person_time_min").value = cfg.runtime?.per_person_time_min ?? 22;
         $("per_person_time_max").value = cfg.runtime?.per_person_time_max ?? 26;
+        
+        // Debug settings
+        $("debug_enabled").value = String(cfg.debug?.enabled ?? false);
+        $("debug_probability").value = (cfg.debug?.probability ?? 0.1) * 100; // Convert to percentage
         
         // Display config
         const display = cfg.display_config || {};
@@ -1132,6 +1174,11 @@
             value_font_size: Number($("value_font_size").value),
             hide_people_count: $("hide_people_count").value === "true",
             time_format: $("time_format").value
+          },
+          
+          debug: {
+            enabled: $("debug_enabled").value === "true",
+            probability: Number($("debug_probability").value) / 100.0 // Convert from percentage
           }
         };
         
@@ -1234,7 +1281,7 @@
     // Initialize
     loadConfig();
     updateLiveStatus();
-    setInterval(updateLiveStatus, 500);
+    setInterval(updateLiveStatus, 1000);
   </script>
 </body>
 </html>

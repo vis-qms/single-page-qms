@@ -244,7 +244,7 @@
     // URL parameters for customization
     const params = new URLSearchParams(location.search);
     const useWebSocket = params.get("ws") !== "false";
-    const refreshRate = parseInt(params.get("refresh")) || 500;
+    const refreshRate = parseInt(params.get("refresh")) || 1000;
     
     // Format wait time based on display configuration
     function formatWaitTime(seconds, timeFormat = "minutes_seconds") {
