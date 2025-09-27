@@ -9,9 +9,12 @@ import queue
 from collections import deque, OrderedDict
 from typing import Any, Dict, Optional, List
 from datetime import datetime
-
+from ultralytics import YOLO
+import torch
+from PIL import Image
 import cv2
 import numpy as np
+import torch
 
 CONFIG_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "data", "config.json")
@@ -120,6 +123,10 @@ class SharedState:
         self.last_frame = None              # BGR frame (display with overlay)
         self.last_detection_frame = None    # BGR frame (cropped for detection)
         self.last_frame_ts = 0.0
+        
+        # Passenger vs Staff classification
+        self.staff_count = 0                # count of staff/CISF personnel
+        self.passenger_count = 0            # count of passengers (people_count - staff_count)
         
         # Enhanced features
         self.tracker = None                 # IoU tracker instance
@@ -436,8 +443,6 @@ class SharedState:
         Enhanced Ultralytics path with advanced detection features.
         Returns detailed detection results with enhanced filtering.
         """
-        from ultralytics import YOLO, RTDETR
-        import torch
 
         runtime = (cfg or {}).get("runtime", {}) or {}
         model_name = str(runtime.get("selected_model", "YOLOv11x"))
@@ -461,7 +466,6 @@ class SharedState:
             'YOLOv11x': 'yolo11x.pt',
             'YOLOv12l': 'yolo12l.pt',
             'YOLOv12x': 'yolo12x.pt',
-            'RT-DETR-X': 'rtdetr-x.pt'
         }
         
         model_file = model_files.get(model_name, f"{model_name}.pt")
@@ -469,10 +473,7 @@ class SharedState:
         
         if key not in self.model_cache:
             try:
-                if "RT-DETR" in model_name.upper():
-                    self.model_cache[key] = RTDETR(model_file)
-                else:
-                    self.model_cache[key] = YOLO(model_file)
+                self.model_cache[key] = YOLO(model_file)
             except Exception:
                 self.model_cache[key] = YOLO("yolov8m.pt")  # fallback
                 
@@ -565,48 +566,123 @@ class SharedState:
             'people_count': len(kept),
             'detections': kept,
             'inference_time': inference_time,
-            'model_name': model_name
+            'model_name': model_name,
+            'frame': frame  # Pass the original frame for classification
         }
 
-    def _infer_transformers_detr(self, frame, cfg):
+    def _classify_passenger_vs_staff(self, frame, detections, cfg):
         """
-        HuggingFace Transformers DETR (facebook/detr-resnet-50).
-        Returns number of 'person' label (id=1 in post-processed results).
+        Classify detected people as passengers or staff/CISF personnel.
+        Crops bounding boxes and runs batch inference on the classification model.
         """
-        import torch
-        from transformers import DetrImageProcessor, DetrForObjectDetection
+        passenger_staff_cfg = (cfg or {}).get("passenger_staff_model", {}) or {}
+        
+        if not bool(passenger_staff_cfg.get("enabled", False)):
+            # If disabled, return all as passengers (staff_count = 0)
+            return len(detections), 0
+        
+        if not detections:
+            return 0, 0
+            
+        try:
+            confidence_threshold = float(passenger_staff_cfg.get("confidence_threshold", 0.6))
+            
+            # Automatic batch size based on number of detections (min 1, max 16 for efficiency)
+            batch_size = max(1, min(16, len(detections)))
+            
+            # Load classification model (cache it) - fixed model path
+            model_path = "best.pt"
+            model_key = f"classification::{model_path}"
+            if model_key not in self.model_cache:
+                try:
+                    # Try to load the model from the single-page-qms directory
+                    model_full_path = os.path.join(os.path.dirname(__file__), "..", model_path)
+                    if not os.path.exists(model_full_path):
+                        # Fallback to relative path
+                        model_full_path = model_path
+                    self.model_cache[model_key] = YOLO(model_full_path)
+                    print(f"✅ Loaded passenger vs staff classification model: {model_full_path}")
+                except Exception as e:
+                    print(f"❌ Failed to load classification model {model_path}: {e}")
+                    return len(detections), 0  # Return all as passengers if model fails to load
+            
+            classification_model = self.model_cache[model_key]
+            
+            # Crop bounding boxes from the original frame
+            cropped_images = []
+            valid_detections = []
+            
+            for detection in detections:
+                bbox = detection.get('bbox', [])
+                if len(bbox) >= 4:
+                    x1, y1, x2, y2 = map(int, bbox[:4])
+                    
+                    # Ensure coordinates are within frame bounds
+                    h, w = frame.shape[:2]
+                    x1 = max(0, min(w-1, x1))
+                    y1 = max(0, min(h-1, y1))
+                    x2 = max(x1+1, min(w, x2))
+                    y2 = max(y1+1, min(h, y2))
+                    
+                    # Crop the detection area
+                    if x2 > x1 and y2 > y1:
+                        cropped = frame[y1:y2, x1:x2]
+                        if cropped.size > 0:
+                            # Convert BGR to RGB for PIL
+                            cropped_rgb = cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB)
+                            cropped_images.append(cropped_rgb)
+                            valid_detections.append(detection)
+            
+            if not cropped_images:
+                return 0, 0
+            
+            # Process images in batches
+            staff_count = 0
+            passenger_count = 0
+            
+            print(f"🔍 Processing {len(cropped_images)} cropped images in batches of {batch_size}")
+            
+            for i in range(0, len(cropped_images), batch_size):
+                batch_images = cropped_images[i:i + batch_size]
+                
+                # Run classification on batch
+                print(f"   🚀 Running batch classification on {len(batch_images)} images...")
+                with torch.inference_mode():
+                    results = classification_model.predict(
+                        source=batch_images,
+                        conf=0.01,  # Use very low conf for model prediction, we'll filter manually
+                        verbose=True  # Enable verbose to see model output
+                    )
+                
+                # Process results
+                for j, result in enumerate(results):
+                    print(f"🔍 Processing result {j}: has_probs={hasattr(result, 'probs')}")
+                    if hasattr(result, 'probs') and result.probs is not None:
+                        # Get top prediction
+                        top1_idx = int(result.probs.top1)
+                        top1_conf = float(result.probs.top1conf)
+                        class_name = classification_model.names.get(top1_idx, "unknown")
+                        
+                        print(f"   📊 Raw classification: class={class_name} (idx={top1_idx}), conf={top1_conf:.3f}")
+                        print(f"   🎯 Confidence threshold: {confidence_threshold}")
+                        
+                        if class_name is 'staff':
+                            staff_count += 1
+                        else:
+                            passenger_count += 1
+                    else:
+                        # If no classification result, assume passenger
+                        passenger_count += 1
+                        print(f"   ❌ No probs object, defaulting to PASSENGER")
+            
+            print(f"📊 Classification results: {passenger_count} passengers, {staff_count} staff/CISF")
+            return passenger_count, staff_count
+            
+        except Exception as e:
+            print(f"❌ Passenger vs Staff classification failed: {e}")
+            # Return all as passengers if classification fails
+            return len(detections), 0
 
-        runtime = (cfg or {}).get("runtime", {}) or {}
-        conf = float(runtime.get("confidence_threshold", 0.5))
-
-        key = "transformers::detr-resnet-50"
-        if key not in self.model_cache:
-            proc = DetrImageProcessor.from_pretrained("facebook/detr-resnet-50")
-            det = DetrForObjectDetection.from_pretrained("facebook/detr-resnet-50")
-            self.model_cache[key] = (proc, det)
-
-        processor, model = self.model_cache[key]
-
-        # BGR -> RGB
-        rgb = frame[:, :, ::-1]
-        inputs = processor(images=rgb, return_tensors="pt")
-        with torch.no_grad():
-            outputs = model(**inputs)
-
-        target_sizes = torch.tensor([rgb.shape[:2]])
-        results = processor.post_process_object_detection(
-            outputs, target_sizes=target_sizes, threshold=conf
-        )[0]
-
-        people = 0
-        for score, label in zip(results["scores"], results["labels"]):
-            try:
-                if int(label.item()) == 1:  # COCO person
-                    people += 1
-            except Exception:
-                pass
-
-        return people
 
     def _infer(self, frame, cfg):
         """
@@ -615,9 +691,6 @@ class SharedState:
         runtime = (cfg or {}).get("runtime", {}) or {}
         model_name = str(runtime.get("selected_model", "YOLOv11x")).lower()
         try:
-            if ("transformers" in model_name) and ("detr" in model_name):
-                self.last_error = None
-                return self._infer_transformers_detr(frame, cfg)
             self.last_error = None
             return self._infer_ultralytics(frame, cfg)
         except Exception as e:
@@ -893,38 +966,73 @@ class SharedState:
                     
                     print(f"🔄 Using Median stabilization - processing {median_frame_count} consecutive frames...")
                     frame_results = []
+                    passenger_results = []
+                    staff_results = []
                     total_inference_time = 0.0
                     
-                    # Process N consecutive frames
+                    # Process N consecutive frames with full detection + classification pipeline
                     for i in range(median_frame_count):
                         # Get a fresh frame for each detection
                         frame_for_detection = self.get_latest_detection_frame()
                         if frame_for_detection is not None:
                             result = self._infer(frame_for_detection, cfg)
                             if isinstance(result, dict):
-                                frame_results.append(result.get('people_count', 0))
+                                raw_count = result.get('people_count', 0)
+                                detections = result.get('detections', [])
+                                original_frame = result.get('frame', frame_for_detection)
                                 total_inference_time += result.get('inference_time', 0.0)
-                                print(f"   Frame {i+1}: {result.get('people_count', 0)} people (inference: {result.get('inference_time', 0.0)*1000:.1f}ms)")
+                                
+                                # Apply passenger vs staff classification for this frame
+                                if detections and original_frame is not None:
+                                    passenger_count, staff_count = self._classify_passenger_vs_staff(original_frame, detections, cfg)
+                                    print(f"   Frame {i+1}: {raw_count} total → {passenger_count} passengers, {staff_count} staff (inference: {result.get('inference_time', 0.0)*1000:.1f}ms)")
+                                else:
+                                    # No detections, assume all are passengers
+                                    passenger_count = raw_count
+                                    staff_count = 0
+                                    print(f"   Frame {i+1}: {raw_count} people (no detections for classification) (inference: {result.get('inference_time', 0.0)*1000:.1f}ms)")
+                                
+                                frame_results.append(raw_count)
+                                passenger_results.append(passenger_count)
+                                staff_results.append(staff_count)
                             else:
+                                # Legacy result (just count)
                                 frame_results.append(result)
-                                print(f"   Frame {i+1}: {result} people")
+                                passenger_results.append(result)  # Assume all passengers
+                                staff_results.append(0)
+                                print(f"   Frame {i+1}: {result} people (legacy mode)")
                         else:
                             print(f"   Frame {i+1}: No frame available")
                             if frame_results:  # Use last result if no frame available
                                 frame_results.append(frame_results[-1])
+                                passenger_results.append(passenger_results[-1])
+                                staff_results.append(staff_results[-1])
                             else:
                                 frame_results.append(0)
+                                passenger_results.append(0)
+                                staff_results.append(0)
                         
                         # Small delay between frames to get different frames
                         time.sleep(0.033)  # ~30ms for 30fps
                     
-                    # Average the results from N frames
+                    # Take median of all results
                     raw_pc = int(round(sum(frame_results) / len(frame_results))) if frame_results else 0
-                    detections = []  # We don't track individual detections in multi-frame mode
+                    median_passengers = int(round(sum(passenger_results) / len(passenger_results))) if passenger_results else 0
+                    median_staff = int(round(sum(staff_results) / len(staff_results))) if staff_results else 0
+                    
+                    detections = []  # We don't need detections after median processing
                     inference_time = total_inference_time / len(frame_results) if frame_results else 0.0
                     model_name = f'{median_frame_count}-frame'
                     
-                    print(f"🔍 {median_frame_count}-Frame results: {frame_results} → Average: {raw_pc}")
+                    print(f"🔍 {median_frame_count}-Frame results:")
+                    print(f"   Total counts: {frame_results} → Average: {raw_pc}")
+                    print(f"   Passenger counts: {passenger_results} → Average: {median_passengers}")
+                    print(f"   Staff counts: {staff_results} → Average: {median_staff}")
+                    
+                    # Store the median classification results
+                    with self.lock:
+                        self.staff_count = median_staff
+                        self.passenger_count = median_passengers
                     
                 else:
                     # Single frame detection for EMA and Rolling methods
@@ -936,11 +1044,31 @@ class SharedState:
                         detections = detection_results.get('detections', [])
                         inference_time = detection_results.get('inference_time', 0.0)
                         model_name = detection_results.get('model_name', 'Unknown')
+                        original_frame = detection_results.get('frame', detection_frame)
+                        
+                        # Apply passenger vs staff classification if enabled
+                        if detections and original_frame is not None:
+                            passenger_count, staff_count = self._classify_passenger_vs_staff(original_frame, detections, cfg)
+                            
+                            # Store the classification results
+                            with self.lock:
+                                self.staff_count = staff_count
+                                self.passenger_count = passenger_count
+                        else:
+                            # No detections or frame, reset classification counts
+                            with self.lock:
+                                self.staff_count = 0
+                                self.passenger_count = raw_pc
                     else:
                         raw_pc = detection_results
                         detections = []
                         inference_time = 0.0
                         model_name = 'Legacy'
+                        
+                        # Reset classification counts for legacy mode
+                        with self.lock:
+                            self.staff_count = 0
+                            self.passenger_count = raw_pc
                 
                 # Apply tracking if enabled
                 tracker_cfg = (cfg or {}).get("tracker", {}) or {}
@@ -961,7 +1089,17 @@ class SharedState:
 
                 # Apply people_adjustment after stabilization
                 adj = int((cfg or {}).get("runtime", {}).get("people_adjustment", -1))
-                final_count = max(0, st_pc + adj)
+                
+                # Check if passenger vs staff model is enabled
+                passenger_staff_cfg = (cfg or {}).get("passenger_staff_model", {}) or {}
+                if bool(passenger_staff_cfg.get("enabled", False)):
+                    # Use passenger count (subtract staff from total)
+                    with self.lock:
+                        final_count = max(0, self.passenger_count + adj)
+                        print(f"🚶‍♂️👮‍♂️ Passenger vs Staff mode: Total={st_pc}, Passengers={self.passenger_count}, Staff={self.staff_count}")
+                else:
+                    # Use regular total count
+                    final_count = max(0, st_pc + adj)
                 
                 # Calculate wait time
                 wait_seconds = self._estimate_wait(final_count, cfg)

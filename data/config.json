@@ -29,7 +29,7 @@
     "per_person_time_min": 26,
     "per_person_time_max": 27,
     "people_adjustment": 0,
-    "selected_model": "YOLOv8m",
+    "selected_model": "YOLOv12l",
     "use_tta": false,
     "max_det": 100,
     "primary_iou": 0.68,
@@ -47,7 +47,7 @@
     "avg_window_frames": 3,
     "ema_alpha": 0.65,
     "max_delta_per_detection": 1,
-    "median_frame_count": 2
+    "median_frame_count": 3
   },
   "polygon_cropping": {
     "enabled": false,
@@ -70,6 +70,10 @@
         "y": 0.7797072964352681
       }
     ]
+  },
+  "passenger_staff_model": {
+    "enabled": true,
+    "confidence_threshold": 0.8
   },
   "display_config": {
     "gate_font_size": 1,

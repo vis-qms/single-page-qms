@@ -265,6 +265,10 @@
         <span>People in Queue</span>
         <span id="livePeople" class="metric-value">0</span>
       </div>
+      <div class="metric" id="staffCountMetric" style="display: none;">
+        <span>Staff/CISF Detected</span>
+        <span id="liveStaff" class="metric-value">0</span>
+      </div>
       <div class="metric">
         <span>Wait Time</span>
         <span id="liveWait" class="metric-value">0 min</span>
@@ -544,6 +548,30 @@
         <div><label>Beta-Optimizer
           <input type="number" id="per_person_time_max" value="26" min="5" max="120"/>
         </label></div>
+      </div>
+    </section>
+
+    <!-- Passenger vs Staff Classification -->
+    <section class="card">
+      <h2>🚶‍♂️👮‍♂️ Passenger vs Staff Classification</h2>
+      <div class="row">
+        <div><label>Enable Passenger vs Staff Model
+          <select id="passenger_staff_enabled">
+            <option value="false">Disabled</option>
+            <option value="true">Enabled</option>
+          </select></label></div>
+        <div><label>Classification Confidence Threshold
+          <input type="number" step="0.01" min="0.1" max="0.95" id="passenger_staff_confidence" value="0.6"/>
+        </label></div>
+      </div>
+      <div class="row">
+        <div></div>
+        <div></div>
+      </div>
+      <div class="muted">
+        When enabled, detected people will be classified as passengers or staff/CISF personnel. 
+        Staff count will be subtracted from total count to show only passengers in queue.
+        Batch size is automatically determined based on the number of detected people.
       </div>
     </section>
 
@@ -962,6 +990,14 @@
           $("totalDetections").textContent = status.total_detections || 0;
           $("avgInference").textContent = `${Math.round((status.average_inference_time || 0) * 1000)} ms`;
           $("totalCycleTime").textContent = `${Math.round((status.total_cycle_time || 0) * 1000)} ms`;
+          
+          // Update staff count if available
+          if (status.staff_count !== undefined) {
+            $("liveStaff").textContent = status.staff_count || 0;
+            $("staffCountMetric").style.display = "flex";
+          } else {
+            $("staffCountMetric").style.display = "none";
+          }
         }
       } catch(e) {
         console.error("Status update failed:", e);
@@ -1047,6 +1083,11 @@
         $("per_person_time_min").value = cfg.runtime?.per_person_time_min ?? 22;
         $("per_person_time_max").value = cfg.runtime?.per_person_time_max ?? 26;
         
+        // Passenger vs Staff Model
+        const passengerStaff = cfg.passenger_staff_model || {};
+        $("passenger_staff_enabled").value = String(passengerStaff.enabled ?? false);
+        $("passenger_staff_confidence").value = passengerStaff.confidence_threshold ?? 0.6;
+        
         // Display config
         const display = cfg.display_config || {};
         console.log('Loading display config:', display);
@@ -1124,6 +1165,11 @@
             enabled: $("poly_enabled").value === "true",
             points_count: parseInt($("polygon_points_count").value),
             points: JSON.parse($("poly_points").value || "[]")
+          },
+          
+          passenger_staff_model: {
+            enabled: $("passenger_staff_enabled").value === "true",
+            confidence_threshold: Number($("passenger_staff_confidence").value)
           },
           
           display_config: {
