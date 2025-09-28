@@ -128,10 +128,10 @@ class SharedState:
         
         # Debug image saving
         self.debug_enabled = False          # Enable/disable debug image saving
-        self.debug_probability = 0.1        # Probability (0.0-1.0) to save debug images
+        self.debug_probability = 10         # Probability (0-100) to save debug images
         self.debug_images_saved = 0         # Counter for saved debug images
         
-        print(f"🐛 DEBUG INIT: enabled={self.debug_enabled}, probability={self.debug_probability}")
+        print(f"🐛 DEBUG INIT: enabled={self.debug_enabled}, probability={self.debug_probability}%")
         
         # Enhanced features
         self.tracker = None                 # IoU tracker instance
@@ -202,10 +202,10 @@ class SharedState:
             old_enabled = self.debug_enabled
             old_prob = self.debug_probability
             self.debug_enabled = bool(debug_cfg.get("enabled", False))
-            self.debug_probability = float(debug_cfg.get("probability", 0.1))
+            self.debug_probability = int(debug_cfg.get("probability", 10))
             
             if old_enabled != self.debug_enabled or old_prob != self.debug_probability:
-                print(f"🐛 DEBUG CONFIG: enabled={self.debug_enabled}, probability={self.debug_probability}")
+                print(f"🐛 DEBUG CONFIG: enabled={self.debug_enabled}, probability={self.debug_probability}%")
             
             return self.config
 
@@ -898,15 +898,15 @@ class SharedState:
             print(f"🐛 DEBUG: Not enabled, skipping session")
             return
             
-        if final_people_count <= 0:
+        if final_people_count < 1:
             print(f"🐛 DEBUG: No people in final count ({final_people_count}), skipping session")
             return
             
         # Check probability once for the entire session
-        rand_val = random.random()
-        print(f"🐛 DEBUG: Session probability check: {rand_val:.3f} vs {self.debug_probability:.3f}")
-        if rand_val > self.debug_probability:
-            print(f"🐛 DEBUG: Session probability check failed, skipping")
+        rand_val = random.randint(0, 100)
+        print(f"🐛 DEBUG: Session probability check: {rand_val} vs {self.debug_probability}")
+        if rand_val >= self.debug_probability:
+            print(f"🐛 DEBUG: Session probability check failed ({rand_val} >= {self.debug_probability}), skipping")
             return
             
         try:

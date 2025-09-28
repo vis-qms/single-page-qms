@@ -1087,7 +1087,7 @@
         
         // Debug settings
         $("debug_enabled").value = String(cfg.debug?.enabled ?? false);
-        $("debug_probability").value = (cfg.debug?.probability ?? 0.1) * 100; // Convert to percentage
+        $("debug_probability").value = cfg.debug?.probability ?? 10; // No conversion needed
         
         // Display config
         const display = cfg.display_config || {};
@@ -1178,7 +1178,7 @@
           
           debug: {
             enabled: $("debug_enabled").value === "true",
-            probability: Number($("debug_probability").value) / 100.0 // Convert from percentage
+            probability: Number($("debug_probability").value) // No conversion needed
           }
         };
         
