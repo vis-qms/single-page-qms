@@ -507,27 +507,9 @@
       </div>
     </section>
   
-    <!-- Tracking & Stabilization -->
+    <!-- Count Stabilization -->
     <section class="card">
-      <h2>Tracking & Count Stabilization</h2>
-      <div class="row">
-        <div><label>Tracking Enabled
-          <select id="tracker_enabled">
-            <option value="false">Disabled</option>
-            <option value="true">Enabled</option>
-          </select></label></div>
-        <div><label>Tracker TTL (frames)
-          <input type="number" id="tracker_ttl" value="2" min="1" max="10"/>
-        </label></div>
-      </div>
-      <div class="row">
-        <div><label>Tracker IoU Threshold
-          <input type="number" step="0.01" min="0.1" max="0.9" id="tracker_iou" value="0.40"/>
-        </label></div>
-        <div></div>
-      </div>
-      
-      <h3 style="font-size: 14px; margin: 12px 0 8px 0;">Count Stabilization</h3>
+      <h2>Count Stabilization</h2>
       <div class="row">
         <div><label>Stabilization Method
           <select id="stab_method">
@@ -1075,10 +1057,6 @@
         }
         // If image not loaded yet, loadPolyFromTextarea will be called by the image load handler
         
-        // Tracking
-        $("tracker_enabled").value = String(cfg.tracker?.enabled ?? false);
-        $("tracker_ttl").value = cfg.tracker?.ttl ?? 2;
-        $("tracker_iou").value = cfg.tracker?.iou_thr ?? 0.40;
         
         // Stabilization
         $("stab_method").value = cfg.count_stabilization?.method || "EMA";
@@ -1155,12 +1133,6 @@
             secondary_iou: Number($("secondary_iou").value),
             min_height_ratio: Number($("min_height_ratio").value),
             min_area_ratio: Number($("min_area_ratio").value)
-          },
-          
-          tracker: {
-            enabled: $("tracker_enabled").value === "true",
-            ttl: Number($("tracker_ttl").value),
-            iou_thr: Number($("tracker_iou").value)
           },
           
           count_stabilization: {

@@ -26,8 +26,7 @@ A comprehensive, single-page Queue Management System with all advanced features 
 - **ROI Support**: Rectangle and polygon region of interest
 - **Confidence Thresholding**: Configurable detection confidence
 
-### 🎯 Tracking & Stabilization
-- **IoU-based Tracking**: Maintain person identities across frames
+### 🎯 Count Stabilization
 - **Count Stabilization**: EMA and Rolling Average smoothing
 - **Max Delta Limiting**: Prevent sudden count jumps
 - **People Adjustment**: Fine-tune final count with offset
@@ -118,14 +117,9 @@ python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ### Advanced Configuration
 
-#### Tracking & Stabilization
+#### Count Stabilization
 ```json
 {
-  "tracker": {
-    "enabled": true,
-    "ttl": 2,
-    "iou_thr": 0.40
-  },
   "count_stabilization": {
     "method": "EMA",
     "ema_alpha": 0.65,
@@ -256,7 +250,6 @@ This enhanced single-page QMS includes all features from the main FastAPI QMS ap
 
 - ✅ Advanced detection models (YOLOv8-12, RT-DETR, DETR)
 - ✅ Enhanced detection pipeline with TTA and filtering
-- ✅ IoU-based tracking system
 - ✅ EMA/Rolling average stabilization
 - ✅ Polygon cropping with visual editor
 - ✅ ML-based wait time prediction

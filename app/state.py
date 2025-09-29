@@ -6,7 +6,7 @@ import threading
 import random
 import pickle
 import queue
-from collections import deque, OrderedDict
+from collections import deque
 from typing import Any, Dict, Optional, List
 from datetime import datetime
 import cv2
@@ -19,51 +19,6 @@ CONFIG_PATH = os.path.abspath(
 )
 
 # Enhanced Detection Classes
-class TinyIOUTracker:
-    """IoU-based tracker for maintaining person identities across frames"""
-    def __init__(self, iou_thr=0.40, ttl=2):
-        self.iou_thr = float(iou_thr)
-        self.ttl = int(ttl)
-        self.tracks = OrderedDict()
-        self.next_id = 1
-
-    @staticmethod
-    def _iou(a, b):
-        x1 = max(a[0], b[0]); y1 = max(a[1], b[1])
-        x2 = min(a[2], b[2]); y2 = min(a[3], b[3])
-        iw = max(0.0, x2 - x1); ih = max(0.0, y2 - y1)
-        inter = iw * ih
-        if inter <= 0: return 0.0
-        area_a = (a[2]-a[0])*(a[3]-a[1]); area_b = (b[2]-b[0])*(b[3]-b[1])
-        return inter / max(area_a + area_b - inter, 1e-6)
-
-    def update(self, detections):
-        dets = [d['bbox'] for d in detections]
-        used = set()
-        for t in self.tracks.values():
-            t['misses'] += 1
-
-        for tid, t in list(self.tracks.items()):
-            best_j, best_iou = -1, 0.0
-            for j, db in enumerate(dets):
-                if j in used: continue
-                iou = self._iou(t['bbox'], db)
-                if iou > best_iou:
-                    best_iou, best_j = iou, j
-            if best_iou >= self.iou_thr and best_j >= 0:
-                t['bbox'] = dets[best_j]
-                t['misses'] = 0
-                used.add(best_j)
-
-        for j, db in enumerate(dets):
-            if j not in used:
-                self.tracks[self.next_id] = {'bbox': db, 'misses': 0}
-                self.next_id += 1
-
-        for tid in [tid for tid, t in self.tracks.items() if t['misses'] > self.ttl]:
-            del self.tracks[tid]
-
-        return [{'id': tid, **t} for tid, t in self.tracks.items()]
 
 class CountStabilizer:
     """Advanced count stabilization using EMA, Rolling Average, or 3-Frame Average (Median)"""
@@ -134,7 +89,6 @@ class SharedState:
         print(f"🐛 DEBUG INIT: enabled={self.debug_enabled}, probability={self.debug_probability}%")
         
         # Enhanced features
-        self.tracker = None                 # IoU tracker instance
         self.stabilizer = None              # Count stabilizer instance
         self.detection_history = deque(maxlen=200)  # Detection history
         self.total_detections = 0
@@ -1272,19 +1226,6 @@ class SharedState:
                         
                         # Debug images are now saved via batch system in median mode
                 
-                # Apply tracking if enabled
-                tracker_cfg = (cfg or {}).get("tracker", {}) or {}
-                if bool(tracker_cfg.get("enabled", False)):
-                    if not hasattr(self, '_tracker_cfg') or self._tracker_cfg != tracker_cfg:
-                        self.tracker = TinyIOUTracker(
-                            ttl=int(tracker_cfg.get("ttl", 2)),
-                            iou_thr=float(tracker_cfg.get("iou_thr", 0.40))
-                        )
-                        self._tracker_cfg = tracker_cfg
-                    
-                    tracks = self.tracker.update(detections)
-                    tracked_count = sum(1 for t in tracks if t.get('misses', 0) <= 1)
-                    raw_pc = tracked_count
                 
                 # Stabilize count
                 st_pc = self._stabilize(raw_pc, cfg)
