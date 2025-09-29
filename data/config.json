@@ -75,7 +75,7 @@
     "gate_font_size": 1,
     "label_font_size": 1,
     "value_font_size": 1,
-    "hide_people_count": false,
+    "hide_people_count": true,
     "time_format": "minute_range"
   },
   "debug": {

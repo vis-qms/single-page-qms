@@ -461,7 +461,8 @@ class SharedState:
         """Extract common model parameters to avoid duplication"""
         runtime = (cfg or {}).get("runtime", {}) or {}
         return {
-            'conf': float(runtime.get("confidence_threshold", 0.5)),
+            'conf': 0.1,  # Get ALL detections from model, filter later
+            'user_conf_threshold': float(runtime.get("confidence_threshold", 0.5)),
             'imgsz': int(runtime.get("imgsz", 1280)),
             'half': bool(runtime.get("half_precision", False)),
             'use_tta': bool(runtime.get("use_tta", False)),
@@ -587,9 +588,17 @@ class SharedState:
             if all(_iou(cand, k) < params['secondary_iou'] for k in kept):
                 kept.append(cand)
         
+        # Save ALL detections for debug (including low confidence)
+        all_detections_for_debug = kept.copy()
+        
+        # Apply confidence filtering for final count only
+        user_conf_threshold = params.get('user_conf_threshold', 0.5)
+        final_detections = [d for d in kept if d['confidence'] >= user_conf_threshold]
+        
         return {
-            'people_count': len(kept),
-            'detections': kept,
+            'people_count': len(final_detections),
+            'detections': all_detections_for_debug,  # Debug gets ALL detections
+            'final_detections': final_detections,    # Final count uses filtered detections
             'inference_time': inference_time,
             'model_name': model_name
         }
@@ -732,15 +741,23 @@ class SharedState:
                     if all(_iou(cand, k) < params['secondary_iou'] for k in kept):
                         kept.append(cand)
                 
+                # Save ALL detections for debug (including low confidence)
+                all_detections_for_debug = kept.copy()
+                
+                # Apply confidence filtering for final count only
+                user_conf_threshold = params.get('user_conf_threshold', 0.5)
+                final_detections = [d for d in kept if d['confidence'] >= user_conf_threshold]
+                
                 batch_results.append({
-                    'people_count': len(kept),
-                    'detections': kept,
+                    'people_count': len(final_detections),
+                    'detections': all_detections_for_debug,  # Debug gets ALL detections
+                    'final_detections': final_detections,    # Final count uses filtered detections
                     'inference_time': avg_inference_time,
                     'model_name': model_name,
                     'frame_index': i
                 })
                 
-                print(f"   Frame {i+1}: {len(kept)} people detected")
+                print(f"   Frame {i+1}: {len(final_detections)} people (from {len(all_detections_for_debug)} total detections)")
             
             return batch_results
             

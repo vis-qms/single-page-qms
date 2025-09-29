@@ -118,12 +118,21 @@
       flex-wrap: wrap;
     }
     .preview { 
-      height: 320px; 
+      height: 480px; 
       border-radius: 12px; 
       overflow: hidden; 
       border: 1px solid #2E3A52; 
       position: relative;
       background: #000;
+    }
+    .live-preview-card {
+      grid-column: span 2;
+    }
+    
+    @media (max-width: 1200px) {
+      .live-preview-card {
+        grid-column: span 1;
+      }
     }
     .muted { 
       color: #9CC2FF; 
@@ -262,6 +271,23 @@
       </div>
     </section>
 
+    <!-- Live Preview -->
+    <section class="card live-preview-card">
+      <h2>Live Preview & Polygon Editor</h2>
+      <div class="preview">
+        <div style="position:relative;width:100%;height:100%;">
+          <img id="previewImg" src="/preview.mjpg?mode=direct&fps=20&q=70&width=960" 
+               style="width:100%;height:100%;object-fit:contain;display:block;" 
+               alt="Camera Preview" />
+          <canvas id="polyCanvas" style="position:absolute;left:0;top:0;width:100%;height:100%;"></canvas>
+        </div>
+      </div>
+      <div class="muted" style="margin-top:8px;">
+        Live stream for cropping & visual checks. 
+        <strong>Click to add polygon points, drag to move them.</strong>
+      </div>
+    </section>
+
     <!-- Live Status -->
     <section class="card">
       <h2>Live Status & Metrics</h2>
@@ -294,23 +320,6 @@
         <span id="totalCycleTime" class="metric-value">0 ms</span>
       </div>
       <div class="muted">Updates every 1s from live API</div>
-    </section>
-
-    <!-- Live Preview -->
-    <section class="card">
-      <h2>Live Preview & Polygon Editor</h2>
-      <div class="preview">
-        <div style="position:relative;width:100%;height:100%;">
-          <img id="previewImg" src="/preview.mjpg?mode=direct&fps=20&q=70&width=960" 
-               style="width:100%;height:100%;object-fit:contain;display:block;" 
-               alt="Camera Preview" />
-          <canvas id="polyCanvas" style="position:absolute;left:0;top:0;width:100%;height:100%;"></canvas>
-        </div>
-      </div>
-      <div class="muted" style="margin-top:8px;">
-        Live stream for cropping & visual checks. 
-        <strong>Click to add polygon points, drag to move them.</strong>
-      </div>
     </section>
 
     <!-- Camera Connection -->
