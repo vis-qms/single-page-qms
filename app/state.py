@@ -81,6 +81,11 @@ class SharedState:
         self._last_wait_people_count = -1   # Track last people count for wait time
         self._cached_wait_time = 0.0        # Cached wait time for same people count
         
+        # Frame drop fallback caching - use last successful detection when frames drop
+        self._last_successful_people_count = 0    # Last successful people count
+        self._last_successful_wait_time = 0.0     # Last successful wait time
+        self._last_successful_timestamp = 0.0     # When last successful detection occurred
+        
         # Debug image saving
         self.debug_enabled = False          # Enable/disable debug image saving
         self.debug_probability = 10         # Probability (0-100) to save debug images
@@ -561,16 +566,27 @@ class SharedState:
     def _infer(self, frame, cfg):
         """
         Route to model family; capture errors for diagnostics.
+        Enhanced with proper fallback caching (no retry - detection interval handles timing).
         """
         runtime = (cfg or {}).get("runtime", {}) or {}
         model_name = str(runtime.get("selected_model", "YOLOv11x")).lower()
+        
         try:
             self.last_error = None
             return self._infer_ultralytics(frame, cfg)
         except Exception as e:
             self.last_error = "{}: {}".format(type(e).__name__, e)
-            # heuristic fallback to avoid crashing UI
-            return int(np.mean(frame) / 32)
+            print(f"❌ Detection inference failed: {self.last_error}")
+            
+            # Use cached fallback - return last successful count (no retry needed due to detection interval)
+            fallback_count = getattr(self, '_last_successful_people_count', 0)
+            print(f"🔄 DEBUG: Using cached fallback people count: {fallback_count} (next detection in {(cfg or {}).get('runtime', {}).get('detection_interval', 1.0)}s)")
+            return {
+                'people_count': fallback_count,
+                'detections': [],
+                'inference_time': 0.0,
+                'model_name': 'cached-fallback'
+            }
 
     def _infer_batch(self, frame_list, cfg):
         """
@@ -716,27 +732,22 @@ class SharedState:
             return batch_results
             
         except Exception as e:
-            print(f"❌ Batch inference error: {e}")
-            # Fallback to individual inference
+            print(f"❌ Batch inference failed: {e}")
+            
+            # Use cached fallback for all frames (no retry needed due to detection interval)
+            fallback_count = getattr(self, '_last_successful_people_count', 0)
+            det_interval = (cfg or {}).get('runtime', {}).get('detection_interval', 1.0)
+            print(f"🔄 DEBUG: Using cached fallback for batch: {fallback_count} people per frame (next detection in {det_interval}s)")
+            
             batch_results = []
             for i, frame in enumerate(frame_list):
-                result = self._infer(frame, cfg)
-                if isinstance(result, dict):
-                    batch_results.append({
-                        'people_count': result.get('people_count', 0),
-                        'detections': result.get('detections', []),
-                        'inference_time': result.get('inference_time', 0.0),
-                        'model_name': result.get('model_name', 'Fallback'),
-                        'frame_index': i
-                    })
-                else:
-                    batch_results.append({
-                        'people_count': result if isinstance(result, int) else 0,
-                        'detections': [],
-                        'inference_time': 0.0,
-                        'model_name': 'Legacy',
-                        'frame_index': i
-                    })
+                batch_results.append({
+                    'people_count': fallback_count,
+                    'detections': [],
+                    'inference_time': 0.0,
+                    'model_name': 'cached-batch-fallback',
+                    'frame_index': i
+                })
             return batch_results
 
     def get_consecutive_frames(self, n=5):
@@ -1118,8 +1129,24 @@ class SharedState:
             detection_frame = self.get_latest_detection_frame()
                     
             if detection_frame is None:
-                # No frame available yet - short sleep and continue (non-blocking)
-                time.sleep(0.05)  # Shorter sleep for better responsiveness
+                # Frame drop detected - use cached values and skip to next detection interval
+                det_interval = float((cfg or {}).get("runtime", {}).get("detection_interval", 1.0))
+                print(f"❌ DEBUG: Frame drop detected, using cached values and skipping to next detection interval ({det_interval}s)")
+                
+                with self.lock:
+                    # Use cached values from last successful detection
+                    cached_count = getattr(self, '_last_successful_people_count', 0)
+                    cached_wait = getattr(self, '_last_successful_wait_time', 0.0)
+                    cached_timestamp = getattr(self, '_last_successful_timestamp', 0.0)
+                    
+                    self.people_count = cached_count
+                    self.wait_time = cached_wait
+                    
+                    age_seconds = now - cached_timestamp if cached_timestamp > 0 else 0
+                    print(f"🔄 DEBUG: Using cached values: people_count={cached_count}, wait_time={cached_wait:.1f}s (cached {age_seconds:.1f}s ago)")
+                    
+                # Skip to next detection interval
+                last_det = now
                 continue
                 
             frame_count += 1
@@ -1186,7 +1213,7 @@ class SharedState:
                         
                     else:
                         print("⚠️  Not enough consecutive frames in buffer, falling back to single frame")
-                        # Fallback to single frame detection
+                        # Fallback to single frame detection with retry
                         detection_frame = self.get_latest_detection_frame()
                         if detection_frame is not None:
                             result = self._infer(detection_frame, cfg)
@@ -1201,10 +1228,24 @@ class SharedState:
                                 inference_time = 0.0
                                 model_name = 'legacy-fallback'
                         else:
-                            raw_pc = 0
-                            detections = []
-                            inference_time = 0.0
-                            model_name = 'no-frame'
+                            # No frame available - use cached fallback and skip to next detection interval
+                            det_interval = float((cfg or {}).get("runtime", {}).get("detection_interval", 1.0))
+                            print(f"❌ DEBUG: No frame for batch fallback, using cached values and skipping interval ({det_interval}s)")
+                            
+                            cached_count = getattr(self, '_last_successful_people_count', 0)
+                            cached_wait = getattr(self, '_last_successful_wait_time', 0.0)
+                            cached_timestamp = getattr(self, '_last_successful_timestamp', 0.0)
+                            
+                            with self.lock:
+                                self.people_count = cached_count
+                                self.wait_time = cached_wait
+                                
+                                age_seconds = now - cached_timestamp if cached_timestamp > 0 else 0
+                                print(f"🔄 DEBUG: Batch fallback cached values: people_count={cached_count}, wait_time={cached_wait:.1f}s (cached {age_seconds:.1f}s ago)")
+                            
+                            # Skip to next detection interval
+                            last_det = now
+                            continue
                     
                 else:
                     # Single frame detection for EMA and Rolling methods
@@ -1245,6 +1286,14 @@ class SharedState:
                     self.people_count = final_count
                     self.wait_time = wait_seconds
                     self.total_cycle_time = total_cycle_time
+                    
+                    # Cache successful detection values for frame drop fallback
+                    # Only cache if this was a successful detection (not a cached fallback)
+                    if not any(fallback_name in model_name for fallback_name in ['cached-fallback', 'cached-batch-fallback']):
+                        self._last_successful_people_count = final_count
+                        self._last_successful_wait_time = wait_seconds
+                        self._last_successful_timestamp = now
+                        print(f"✅ Cached successful detection: count={final_count}, wait={wait_seconds:.1f}s")
                     
                     # Get stabilization method for debug output
                     stab_method = (cfg or {}).get("count_stabilization", {}).get("method", "EMA")
