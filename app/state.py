@@ -818,7 +818,7 @@ class SharedState:
             with torch.inference_mode():
                 results = model.track(
                     source=frame,
-                    persist=True,              # Key: maintains track IDs across calls
+                    persist=True,              
                     tracker="bytetrack.yaml",  # Use ByteTrack
                     conf=track_low_thresh,     # Lower threshold for tracking (re-detection)
                     iou=params['primary_iou'],
