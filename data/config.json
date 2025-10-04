@@ -15,12 +15,12 @@
     "webcam_index": 0
   },
   "runtime": {
-    "frame_read_fps": 60,
-    "detection_interval": 0.1,
+    "frame_read_fps": 30,
+    "detection_interval": 2,
     "half_precision": false,
     "image_quality": "High (Sharp)",
-    "confidence_threshold": 0.7,
-    "imgsz": 1280,
+    "confidence_threshold": 0.3,
+    "imgsz": 640,
     "enable_cropping": false,
     "crop_left": 0,
     "crop_top": 0,
@@ -29,7 +29,7 @@
     "per_person_time_min": 30,
     "per_person_time_max": 35,
     "people_adjustment": 0,
-    "selected_model": "YOLOv12x",
+    "selected_model": "YOLOv8m",
     "use_tta": false,
     "max_det": 100,
     "primary_iou": 0.68,
@@ -38,14 +38,21 @@
     "min_area_ratio": 0.00015
   },
   "count_stabilization": {
-    "method": "Median",
+    "method": "Tracking",
     "avg_window_frames": 3,
     "ema_alpha": 0.65,
     "max_delta_per_detection": 1,
-    "median_frame_count": 5
+    "median_frame_count": 5,
+    "bytetrack": {
+      "track_buffer": 20,
+      "track_high_thresh": 0.5,
+      "track_low_thresh": 0.6,
+      "match_thresh": 0.7,
+      "min_track_age": 3
+    }
   },
   "polygon_cropping": {
-    "enabled": true,
+    "enabled": false,
     "points_count": 4,
     "points": [
       {
@@ -74,7 +81,7 @@
     "time_format": "minute_range"
   },
   "debug": {
-    "enabled": true,
+    "enabled": false,
     "probability": 80
   }
 }

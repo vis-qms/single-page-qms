@@ -99,6 +99,13 @@ class SharedState:
         self.total_detections = 0
         self.average_inference_time = 0.0
         self.total_cycle_time = 0.0         # Total detection cycle time
+        
+        # ByteTrack state (for "Tracking" stabilization method)
+        self.active_track_ids = set()       # Currently active track IDs
+        self.track_confidence = {}          # Track ID → confidence score
+        self.track_last_seen = {}           # Track ID → last frame number
+        self.track_birth_frame = {}         # Track ID → frame when first detected
+        self.current_frame_number = 0       # Frame counter for tracking
 
         # Runtime states
         self.connected = False
@@ -761,6 +768,198 @@ class SharedState:
                 print(f"⚠️  Only {len(self.consecutive_frame_buffer)} frames available, need {n}")
                 return [], []
 
+    # ---------------- ByteTrack tracking methods ----------------
+    
+    def _track_frame(self, frame, cfg):
+        """
+        Track objects in single frame using ByteTrack.
+        Returns tracking results with persistent IDs across frames.
+        """
+        if frame is None or frame.size == 0:
+            return None
+            
+        runtime = (cfg or {}).get("runtime", {}) or {}
+        model_name = str(runtime.get("selected_model", "YOLOv11x"))
+        params = self._get_model_params(cfg)
+        
+        # Get model from cache (same as inference)
+        model_files = {
+            'YOLOv8m': 'yolov8m.pt',
+            'YOLOv8x': 'yolov8x.pt', 
+            'YOLOv9e': 'yolov9e.pt',
+            'YOLOv10x': 'yolov10x.pt',
+            'YOLOv11l': 'yolo11l.pt',
+            'YOLOv11x': 'yolo11x.pt',
+            'YOLOv12l': 'yolo12l.pt',
+            'YOLOv12x': 'yolo12x.pt',
+        }
+        
+        model_file = model_files.get(model_name, f"{model_name}.pt")
+        key = f"ultra::{model_file}::{params['half']}"
+        
+        if key not in self.model_cache:
+            try:
+                self.model_cache[key] = YOLO(model_file)
+            except Exception:
+                self.model_cache[key] = YOLO("yolov8m.pt")  # fallback
+                
+        model = self.model_cache[key]
+        
+        try:
+            # Get tracking configuration
+            track_cfg = (cfg or {}).get("count_stabilization", {}).get("bytetrack", {}) or {}
+            track_high_thresh = float(track_cfg.get("track_high_thresh", 0.6))
+            track_low_thresh = float(track_cfg.get("track_low_thresh", 0.1))
+            match_thresh = float(track_cfg.get("match_thresh", 0.8))
+            
+            start_time = time.time()
+            
+            # Run tracking with ByteTrack
+            with torch.inference_mode():
+                results = model.track(
+                    source=frame,
+                    persist=True,              # Key: maintains track IDs across calls
+                    tracker="bytetrack.yaml",  # Use ByteTrack
+                    conf=track_low_thresh,     # Lower threshold for tracking (re-detection)
+                    iou=params['primary_iou'],
+                    imgsz=params['imgsz'],
+                    half=params['half'],
+                    classes=[0],               # Person only
+                    verbose=False,
+                    max_det=params['max_det']
+                )
+            
+            inference_time = time.time() - start_time
+            
+            if results and len(results) > 0:
+                result = results[0]
+                
+                # Apply additional filters (height, area, polygon ROI)
+                h, w = frame.shape[:2]
+                img_area = float(max(1, h * w))
+                min_h = max(1.0, h * params['min_height_ratio'])
+                min_area = max(1.0, img_area * params['min_area_ratio'])
+                
+                # Get polygon ROI if enabled
+                poly = (cfg or {}).get("polygon_cropping", {}) or {}
+                roi_polygon = None
+                if bool(poly.get("enabled", False)):
+                    pts = poly.get("points") or []
+                    if len(pts) >= 3:
+                        pixel_points = self._polygon_points_to_pixels(pts, w, h)
+                        roi_polygon = [(pt[0], pt[1]) for pt in pixel_points]
+                
+                def _inside_roi_center(bbox, polygon):
+                    if not polygon:
+                        return True
+                    cx = int((bbox[0] + bbox[2]) * 0.5)
+                    cy = int((bbox[1] + bbox[3]) * 0.5)
+                    poly_np = np.array(polygon, dtype=np.int32).reshape(-1, 1, 2)
+                    return cv2.pointPolygonTest(poly_np, (cx, cy), False) >= 0
+                
+                # Filter tracked objects
+                valid_tracks = []
+                if result.boxes is not None and result.boxes.id is not None:
+                    boxes = result.boxes.xyxy.cpu().numpy()
+                    confidences = result.boxes.conf.cpu().numpy()
+                    track_ids = result.boxes.id.cpu().numpy().astype(int)
+                    
+                    for box, conf, track_id in zip(boxes, confidences, track_ids):
+                        x1, y1, x2, y2 = box
+                        
+                        # Apply enhanced filters
+                        if (y2 - y1) < min_h:
+                            continue
+                        if (x2 - x1) * (y2 - y1) < min_area:
+                            continue
+                        if not _inside_roi_center([x1, y1, x2, y2], roi_polygon):
+                            continue
+                        
+                        # Only count if confidence is above high threshold
+                        if conf >= track_high_thresh:
+                            valid_tracks.append({
+                                'track_id': int(track_id),
+                                'confidence': float(conf),
+                                'bbox': [int(x1), int(y1), int(x2), int(y2)]
+                            })
+                
+                return {
+                    'valid_tracks': valid_tracks,
+                    'inference_time': inference_time,
+                    'model_name': model_name
+                }
+            
+            return {
+                'valid_tracks': [],
+                'inference_time': inference_time,
+                'model_name': model_name
+            }
+            
+        except Exception as e:
+            print(f"❌ Tracking error: {e}")
+            return None
+    
+    def _cleanup_lost_tracks(self, current_frame, cfg):
+        """
+        Remove tracks not seen in last N frames.
+        This handles people leaving the queue.
+        """
+        track_cfg = (cfg or {}).get("count_stabilization", {}).get("bytetrack", {}) or {}
+        track_buffer = int(track_cfg.get("track_buffer", 30))  # Default: 30 frames (1s at 30 FPS)
+        
+        lost_ids = []
+        for track_id, last_frame in list(self.track_last_seen.items()):
+            if (current_frame - last_frame) > track_buffer:
+                lost_ids.append(track_id)
+        
+        for track_id in lost_ids:
+            self.active_track_ids.discard(track_id)
+            self.track_confidence.pop(track_id, None)
+            self.track_last_seen.pop(track_id, None)
+            self.track_birth_frame.pop(track_id, None)
+            print(f"🗑️  Track #{track_id} expired (not seen for {track_buffer} frames)")
+    
+    def _update_tracks(self, tracking_result, current_frame, cfg):
+        """
+        Update active tracks based on tracking results.
+        Handles track lifecycle (birth, update, death).
+        """
+        track_cfg = (cfg or {}).get("count_stabilization", {}).get("bytetrack", {}) or {}
+        min_track_age = int(track_cfg.get("min_track_age", 5))  # Must exist N frames to count
+        
+        # ALWAYS cleanup lost tracks first, even if no detections in current frame
+        self._cleanup_lost_tracks(current_frame, cfg)
+        
+        # If no detections in current frame, we're done (tracks cleaned up above)
+        if not tracking_result or not tracking_result.get('valid_tracks'):
+            return
+        
+        # Update tracks from current frame
+        current_track_ids = set()
+        for track_info in tracking_result['valid_tracks']:
+            track_id = track_info['track_id']
+            confidence = track_info['confidence']
+            
+            # Update track state
+            if track_id not in self.track_last_seen:
+                # New track - mark birth frame
+                self.track_birth_frame[track_id] = current_frame
+                print(f"🆕 New track #{track_id} detected (conf: {confidence:.2f})")
+            
+            self.track_confidence[track_id] = confidence
+            self.track_last_seen[track_id] = current_frame
+            current_track_ids.add(track_id)
+        
+        # Add tracks to active set only if they've existed for min_track_age frames
+        for track_id in current_track_ids:
+            birth_frame = self.track_birth_frame.get(track_id, current_frame)
+            track_age = current_frame - birth_frame
+            
+            if track_age >= min_track_age or track_id in self.active_track_ids:
+                if track_id not in self.active_track_ids:
+                    print(f"✅ Track #{track_id} confirmed (age: {track_age} frames)")
+                self.active_track_ids.add(track_id)
+
     # ---------------- stabilization & wait-time ----------------
 
     def _stabilize(self, raw_count, cfg):
@@ -1080,12 +1279,25 @@ class SharedState:
 
     # ---------------- worker loop ----------------
 
+    def _reset_tracking_state(self):
+        """Reset ByteTrack state when starting/stopping detection"""
+        with self.lock:
+            self.active_track_ids.clear()
+            self.track_confidence.clear()
+            self.track_last_seen.clear()
+            self.track_birth_frame.clear()
+            self.current_frame_number = 0
+        print("🔄 Tracking state reset")
+    
     def start(self):
         if self.thread and self.thread.is_alive():
             self.running = True
             print("🚀 Detection already running, resuming...")
             return
         print("🚀 Starting detection system...")
+        
+        # Reset tracking state for fresh start
+        self._reset_tracking_state()
         
         # Start frame capture thread first
         cfg = self.get_config()
@@ -1107,6 +1319,9 @@ class SharedState:
             
         # Stop frame capture thread
         self._stop_frame_capture()
+        
+        # Reset tracking state
+        self._reset_tracking_state()
         
         print("🛑 Detection system stopped")
 
@@ -1159,15 +1374,83 @@ class SharedState:
             
             time_since_last = now - last_det
 
+            # Check stabilization method to determine processing mode
+            stab_method = (cfg or {}).get("count_stabilization", {}).get("method", "EMA")
+            
+            # ============================================================
+            # TRACKING MODE: Continuous tracking, update display at intervals
+            # ============================================================
+            if stab_method == "Tracking":
+                # Increment frame counter for tracking
+                self.current_frame_number += 1
+                now = time.time()
+                
+                # Track EVERY frame (no detection interval for tracking)
+                tracking_result = self._track_frame(detection_frame, cfg)
+                
+                if tracking_result:
+                    # Update track state
+                    self._update_tracks(tracking_result, self.current_frame_number, cfg)
+                    
+                    # Update display at detection_interval
+                    time_since_last = now - last_det
+                    if time_since_last >= det_interval:
+                        # Count active tracks
+                        people_count = len(self.active_track_ids)
+                        
+                        # Calculate wait time
+                        wait_seconds = self._estimate_wait(people_count, cfg)
+                        
+                        with self.lock:
+                            self.people_count = people_count
+                            self.wait_time = wait_seconds
+                            self.last_frame_ts = now
+                            
+                            # Cache successful values
+                            self._last_successful_people_count = people_count
+                            self._last_successful_wait_time = wait_seconds
+                            self._last_successful_timestamp = now
+                        
+                        print(f"📊 TRACKING UPDATE (frame {self.current_frame_number}):")
+                        print(f"   Active tracks: {sorted(self.active_track_ids)}")
+                        print(f"   People count: {people_count}")
+                        print(f"   Wait time: {wait_seconds:.1f}s ({wait_seconds/60:.1f} min)")
+                        print(f"   Inference: {tracking_result['inference_time']*1000:.1f}ms")
+                        
+                        # Update telemetry
+                        self.total_detections += 1
+                        if len(self.detection_history) > 0:
+                            recent_times = [r['inference_time'] for r in list(self.detection_history)[-10:]]
+                            self.average_inference_time = sum(recent_times) / len(recent_times)
+                        else:
+                            self.average_inference_time = tracking_result['inference_time']
+                        
+                        # Add to detection history
+                        detection_record = {
+                            'timestamp': now,
+                            'people_count': people_count,
+                            'wait_time': wait_seconds / 60.0,
+                            'model_name': f"ByteTrack-{tracking_result['model_name']}",
+                            'confidence': float((cfg or {}).get("runtime", {}).get("confidence_threshold", 0.5)),
+                            'inference_time': tracking_result['inference_time']
+                        }
+                        self.detection_history.append(detection_record)
+                        
+                        last_det = now
+                
+                # No sleep - process next frame immediately for continuous tracking
+                continue
+            
+            # ============================================================
+            # BATCH/INTERVAL MODE: EMA and Median methods
+            # ============================================================
+            
             # LEGACY QMS OPTIMIZATION: Process at intervals but on FRESH frames only
             if time_since_last >= det_interval:
                 print(f"🤖 Starting detection inference (interval: {det_interval}s)")
                 
                 # Track total cycle start time
                 cycle_start_time = time.time()
-                
-                # Check if using Median stabilization - run detection on 3 consecutive frames
-                stab_method = (cfg or {}).get("count_stabilization", {}).get("method", "EMA")
                 
                 if stab_method == "Median":
                     # Get configurable frame count (2-5, default 3)
