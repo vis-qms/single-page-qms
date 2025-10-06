@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 import torch
+import yaml
 
 CONFIG_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "data", "config.json")
@@ -100,12 +101,8 @@ class SharedState:
         self.average_inference_time = 0.0
         self.total_cycle_time = 0.0         # Total detection cycle time
         
-        # ByteTrack state (for "Tracking" stabilization method)
-        self.active_track_ids = set()       # Currently active track IDs
-        self.track_confidence = {}          # Track ID → confidence score
-        self.track_last_seen = {}           # Track ID → last frame number
-        self.track_birth_frame = {}         # Track ID → frame when first detected
-        self.current_frame_number = 0       # Frame counter for tracking
+        # Tracking mode max_delta state
+        self._tracker_last_count = 0        # Last committed count for tracking mode
 
         # Runtime states
         self.connected = False
@@ -768,11 +765,46 @@ class SharedState:
                 print(f"⚠️  Only {len(self.consecutive_frame_buffer)} frames available, need {n}")
                 return [], []
 
-    # ---------------- ByteTrack tracking methods ----------------
+    # ---------------- Tracking methods ----------------
+    
+    def _write_tracker_yaml(self, tracker_type, track_cfg):
+        """
+        Write tracker YAML file with current configuration.
+        """
+
+        
+        # Common parameters for both trackers
+        yaml_config = {
+            'tracker_type': tracker_type,
+            'track_high_thresh': float(track_cfg.get('track_high_thresh', 0.6)),
+            'track_low_thresh': float(track_cfg.get('track_low_thresh', 0.1)),
+            'new_track_thresh': float(track_cfg.get('new_track_thresh', 0.6)),
+            'track_buffer': int(track_cfg.get('track_buffer', 30)),
+            'match_thresh': float(track_cfg.get('match_thresh', 0.8)),
+            'fuse_score': bool(track_cfg.get('fuse_score', True))
+        }
+        
+        # Add BoT-SORT specific parameters
+        if tracker_type == 'botsort':
+            yaml_config.update({
+                'gmc_method': track_cfg.get('gmc_method', 'sparseOptFlow'),
+                'proximity_thresh': float(track_cfg.get('proximity_thresh', 0.5)),
+                'appearance_thresh': float(track_cfg.get('appearance_thresh', 0.8)),
+                'with_reid': bool(track_cfg.get('with_reid', False)),
+                'model': 'auto'
+            })
+        
+        # Write YAML file
+        yaml_path = f"{tracker_type}.yaml"
+        try:
+            with open(yaml_path, 'w') as f:
+                yaml.dump(yaml_config, f, default_flow_style=False, sort_keys=False)
+        except Exception as e:
+            print(f"Warning: Could not write {yaml_path}: {e}")
     
     def _track_frame(self, frame, cfg):
         """
-        Track objects in single frame using ByteTrack.
+        Track objects in single frame using ByteTrack or BoT-SORT.
         Returns tracking results with persistent IDs across frames.
         """
         if frame is None or frame.size == 0:
@@ -807,57 +839,39 @@ class SharedState:
         
         try:
             # Get tracking configuration
-            track_cfg = (cfg or {}).get("count_stabilization", {}).get("bytetrack", {}) or {}
-            track_high_thresh = float(track_cfg.get("track_high_thresh", 0.6))
-            track_low_thresh = float(track_cfg.get("track_low_thresh", 0.1))
-            match_thresh = float(track_cfg.get("match_thresh", 0.8))
+            stab_cfg = (cfg or {}).get("count_stabilization", {}) or {}
+            tracker_type = stab_cfg.get("tracker_type", "bytetrack")
+            track_cfg = stab_cfg.get(tracker_type, {}) or {}
+            
+            # Write YAML file with current config (tracker handles confidence filtering internally)
+            self._write_tracker_yaml(tracker_type, track_cfg)
             
             start_time = time.time()
-            
-            # Run tracking with ByteTrack
+            tracker_yaml = f"{tracker_type}.yaml"
             with torch.inference_mode():
                 results = model.track(
                     source=frame,
                     persist=True,              
-                    tracker="bytetrack.yaml",  # Use ByteTrack
-                    conf=track_low_thresh,     # Lower threshold for tracking (re-detection)
+                    tracker=tracker_yaml,
+                    imgsz=params['imgsz'], 
+                    conf=params['conf'], 
                     iou=params['primary_iou'],
-                    imgsz=params['imgsz'],
-                    half=params['half'],
-                    classes=[0],               # Person only
+                    half=params['half'], 
                     verbose=False,
-                    max_det=params['max_det']
+                    classes=[0],  # person only
+                    max_det=params['max_det'],
+                    augment=params['use_tta']
                 )
+
             
             inference_time = time.time() - start_time
             
             if results and len(results) > 0:
                 result = results[0]
                 
-                # Apply additional filters (height, area, polygon ROI)
-                h, w = frame.shape[:2]
-                img_area = float(max(1, h * w))
-                min_h = max(1.0, h * params['min_height_ratio'])
-                min_area = max(1.0, img_area * params['min_area_ratio'])
-                
-                # Get polygon ROI if enabled
-                poly = (cfg or {}).get("polygon_cropping", {}) or {}
-                roi_polygon = None
-                if bool(poly.get("enabled", False)):
-                    pts = poly.get("points") or []
-                    if len(pts) >= 3:
-                        pixel_points = self._polygon_points_to_pixels(pts, w, h)
-                        roi_polygon = [(pt[0], pt[1]) for pt in pixel_points]
-                
-                def _inside_roi_center(bbox, polygon):
-                    if not polygon:
-                        return True
-                    cx = int((bbox[0] + bbox[2]) * 0.5)
-                    cy = int((bbox[1] + bbox[3]) * 0.5)
-                    poly_np = np.array(polygon, dtype=np.int32).reshape(-1, 1, 2)
-                    return cv2.pointPolygonTest(poly_np, (cx, cy), False) >= 0
-                
-                # Filter tracked objects
+                # Frame is already masked/cropped before tracking
+                # Tracker handles confidence filtering via YAML
+                # Just extract the tracked objects
                 valid_tracks = []
                 if result.boxes is not None and result.boxes.id is not None:
                     boxes = result.boxes.xyxy.cpu().numpy()
@@ -866,22 +880,11 @@ class SharedState:
                     
                     for box, conf, track_id in zip(boxes, confidences, track_ids):
                         x1, y1, x2, y2 = box
-                        
-                        # Apply enhanced filters
-                        if (y2 - y1) < min_h:
-                            continue
-                        if (x2 - x1) * (y2 - y1) < min_area:
-                            continue
-                        if not _inside_roi_center([x1, y1, x2, y2], roi_polygon):
-                            continue
-                        
-                        # Only count if confidence is above high threshold
-                        if conf >= track_high_thresh:
-                            valid_tracks.append({
-                                'track_id': int(track_id),
-                                'confidence': float(conf),
-                                'bbox': [int(x1), int(y1), int(x2), int(y2)]
-                            })
+                        valid_tracks.append({
+                            'track_id': int(track_id),
+                            'confidence': float(conf),
+                            'bbox': [int(x1), int(y1), int(x2), int(y2)]
+                        })
                 
                 return {
                     'valid_tracks': valid_tracks,
@@ -898,68 +901,6 @@ class SharedState:
         except Exception as e:
             print(f"❌ Tracking error: {e}")
             return None
-    
-    def _cleanup_lost_tracks(self, current_frame, cfg):
-        """
-        Remove tracks not seen in last N frames.
-        This handles people leaving the queue.
-        """
-        track_cfg = (cfg or {}).get("count_stabilization", {}).get("bytetrack", {}) or {}
-        track_buffer = int(track_cfg.get("track_buffer", 30))  # Default: 30 frames (1s at 30 FPS)
-        
-        lost_ids = []
-        for track_id, last_frame in list(self.track_last_seen.items()):
-            if (current_frame - last_frame) > track_buffer:
-                lost_ids.append(track_id)
-        
-        for track_id in lost_ids:
-            self.active_track_ids.discard(track_id)
-            self.track_confidence.pop(track_id, None)
-            self.track_last_seen.pop(track_id, None)
-            self.track_birth_frame.pop(track_id, None)
-            print(f"🗑️  Track #{track_id} expired (not seen for {track_buffer} frames)")
-    
-    def _update_tracks(self, tracking_result, current_frame, cfg):
-        """
-        Update active tracks based on tracking results.
-        Handles track lifecycle (birth, update, death).
-        """
-        track_cfg = (cfg or {}).get("count_stabilization", {}).get("bytetrack", {}) or {}
-        min_track_age = int(track_cfg.get("min_track_age", 5))  # Must exist N frames to count
-        
-        # ALWAYS cleanup lost tracks first, even if no detections in current frame
-        self._cleanup_lost_tracks(current_frame, cfg)
-        
-        # If no detections in current frame, we're done (tracks cleaned up above)
-        if not tracking_result or not tracking_result.get('valid_tracks'):
-            return
-        
-        # Update tracks from current frame
-        current_track_ids = set()
-        for track_info in tracking_result['valid_tracks']:
-            track_id = track_info['track_id']
-            confidence = track_info['confidence']
-            
-            # Update track state
-            if track_id not in self.track_last_seen:
-                # New track - mark birth frame
-                self.track_birth_frame[track_id] = current_frame
-                print(f"🆕 New track #{track_id} detected (conf: {confidence:.2f})")
-            
-            self.track_confidence[track_id] = confidence
-            self.track_last_seen[track_id] = current_frame
-            current_track_ids.add(track_id)
-        
-        # Add tracks to active set only if they've existed for min_track_age frames
-        for track_id in current_track_ids:
-            birth_frame = self.track_birth_frame.get(track_id, current_frame)
-            track_age = current_frame - birth_frame
-            
-            if track_age >= min_track_age or track_id in self.active_track_ids:
-                if track_id not in self.active_track_ids:
-                    print(f"✅ Track #{track_id} confirmed (age: {track_age} frames)")
-                self.active_track_ids.add(track_id)
-
     # ---------------- stabilization & wait-time ----------------
 
     def _stabilize(self, raw_count, cfg):
@@ -1122,6 +1063,32 @@ class SharedState:
             
         except Exception as e:
             print(f"❌ Error saving debug session: {e}")
+    
+    def _save_empty_queue_frame(self, frame, timestamp):
+        """
+        Save frame when queue is empty (0 people) in tracker mode with 0.25% probability.
+        This helps collect edge case data without overwhelming storage.
+        """
+        try:
+            # Create directory for empty queue frames
+            empty_queue_dir = os.path.join(os.path.dirname(__file__), "..", "empty_queue_frames")
+            os.makedirs(empty_queue_dir, exist_ok=True)
+            
+            # Create filename with timestamp
+            dt = datetime.fromtimestamp(timestamp)
+            filename = f"empty_queue_{dt.strftime('%Y%m%d_%H%M%S_%f')[:-3]}.jpg"
+            filepath = os.path.join(empty_queue_dir, filename)
+            
+            # Save frame
+            cv2.imwrite(filepath, frame)
+            
+            # Count saved frames
+            saved_count = len([f for f in os.listdir(empty_queue_dir) if f.endswith('.jpg')])
+            print(f"📸 TRACKER: Saved empty queue frame #{saved_count} (0 people, 0.25% probability)")
+            print(f"   File: {filename}")
+            
+        except Exception as e:
+            print(f"❌ Error saving empty queue frame: {e}")
 
     # ---------------- frame capture system (like legacy QMS) ----------------
     
@@ -1280,14 +1247,11 @@ class SharedState:
     # ---------------- worker loop ----------------
 
     def _reset_tracking_state(self):
-        """Reset ByteTrack state when starting/stopping detection"""
-        with self.lock:
-            self.active_track_ids.clear()
-            self.track_confidence.clear()
-            self.track_last_seen.clear()
-            self.track_birth_frame.clear()
-            self.current_frame_number = 0
-        print("🔄 Tracking state reset")
+        """Clear tracker - ByteTrack/BoT-SORT handles its own state with persist=True"""
+        # Tracker state is managed by ultralytics, nothing to reset
+        # Reset max_delta tracking state
+        self._tracker_last_count = 0
+        print("🔄 Tracker will reset on next detection start")
     
     def start(self):
         if self.thread and self.thread.is_alive():
@@ -1381,22 +1345,39 @@ class SharedState:
             # TRACKING MODE: Continuous tracking, update display at intervals
             # ============================================================
             if stab_method == "Tracking":
-                # Increment frame counter for tracking
-                self.current_frame_number += 1
-                now = time.time()
-                
-                # Track EVERY frame (no detection interval for tracking)
+                # Track EVERY frame (tracker handles persistence)
                 tracking_result = self._track_frame(detection_frame, cfg)
                 
                 if tracking_result:
-                    # Update track state
-                    self._update_tracks(tracking_result, self.current_frame_number, cfg)
-                    
                     # Update display at detection_interval
                     time_since_last = now - last_det
                     if time_since_last >= det_interval:
-                        # Count active tracks
-                        people_count = len(self.active_track_ids)
+                        # Trust ByteTrack/BoT-SORT - count the tracks it returns
+                        raw_track_count = len(tracking_result['valid_tracks'])
+                        
+                        # Apply max_delta protection for tracking mode (safety against sudden spikes)
+                        cs = (cfg or {}).get("count_stabilization", {}) or {}
+                        max_delta = int(cs.get("max_delta_per_detection", 1))
+                        
+                        delta = raw_track_count - self._tracker_last_count
+                        if delta > max_delta:
+                            people_count = self._tracker_last_count + max_delta
+                            print(f"🛡️  TRACKING: Rate limited +{delta} to +{max_delta} (from {self._tracker_last_count} to {people_count}, raw: {raw_track_count})")
+                        elif delta < -max_delta:
+                            people_count = self._tracker_last_count - max_delta
+                            print(f"🛡️  TRACKING: Rate limited {delta} to -{max_delta} (from {self._tracker_last_count} to {people_count}, raw: {raw_track_count})")
+                        else:
+                            people_count = raw_track_count
+                        
+                        # Update committed count for next detection
+                        self._tracker_last_count = people_count
+                        
+                        # Save frame with 0.25% probability when queue is empty (tracker mode only)
+                        if people_count == 0:
+                            # 0.25% = 0.0025 probability
+                            # Using random integer check: 1 out of 400 (0.25% = 1/400)
+                            if random.randint(1, 400) == 1:
+                                self._save_empty_queue_frame(detection_frame, now)
                         
                         # Calculate wait time
                         wait_seconds = self._estimate_wait(people_count, cfg)
@@ -1411,9 +1392,11 @@ class SharedState:
                             self._last_successful_wait_time = wait_seconds
                             self._last_successful_timestamp = now
                         
-                        print(f"📊 TRACKING UPDATE (frame {self.current_frame_number}):")
-                        print(f"   Active tracks: {sorted(self.active_track_ids)}")
-                        print(f"   People count: {people_count}")
+                        track_ids = [t['track_id'] for t in tracking_result['valid_tracks']]
+                        print(f"📊 TRACKING UPDATE:")
+                        print(f"   Active tracks: {sorted(track_ids)}")
+                        print(f"   Raw track count: {raw_track_count}")
+                        print(f"   Rate-limited count: {people_count} (max_delta: ±{max_delta})")
                         print(f"   Wait time: {wait_seconds:.1f}s ({wait_seconds/60:.1f} min)")
                         print(f"   Inference: {tracking_result['inference_time']*1000:.1f}ms")
                         
@@ -1426,11 +1409,12 @@ class SharedState:
                             self.average_inference_time = tracking_result['inference_time']
                         
                         # Add to detection history
+                        tracker_name = (cfg or {}).get("count_stabilization", {}).get("tracker_type", "bytetrack").upper()
                         detection_record = {
                             'timestamp': now,
                             'people_count': people_count,
                             'wait_time': wait_seconds / 60.0,
-                            'model_name': f"ByteTrack-{tracking_result['model_name']}",
+                            'model_name': f"{tracker_name}-{tracking_result['model_name']}",
                             'confidence': float((cfg or {}).get("runtime", {}).get("confidence_threshold", 0.5)),
                             'inference_time': tracking_result['inference_time']
                         }

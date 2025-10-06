@@ -516,7 +516,7 @@
             <option value="EMA" selected>EMA (Exponential Moving Average)</option>
             <option value="Rolling">Rolling Average</option>
             <option value="Median">Median Frame Average</option>
-            <option value="Tracking">🎯 ByteTrack (Continuous Tracking)</option>
+            <option value="Tracking">Tracking</option>
           </select></label></div>
         <div><label>EMA Alpha
           <input type="number" step="0.01" min="0.1" max="1.0" id="ema_alpha" value="0.65"/>
@@ -537,16 +537,25 @@
         <div><div class="muted" style="margin-top: 8px;">Number of consecutive frames to average for Median Frame Average method</div></div>
       </div>
       
-      <!-- ByteTrack Configuration (shown when Tracking method selected) -->
+      <!-- Tracking Configuration (shown when Tracking method selected) -->
       <div id="bytetrackConfig" style="display: none;">
-        <h3 style="font-size: 14px; margin: 16px 0 8px 0; color: #9CC2FF;">🎯 ByteTrack Parameters</h3>
+        <h3 style="font-size: 14px; margin: 16px 0 8px 0; color: #9CC2FF;">🎯 Tracking Parameters</h3>
+        <div class="row">
+          <div><label>Tracker Algorithm
+            <select id="tracker_type">
+              <option value="bytetrack">ByteTrack</option>
+              <option value="botsort">BoT-SORT</option>
+            </select>
+          </label></div>
+          <div><div class="muted" style="margin-top: 8px;">Select tracking algorithm to use</div></div>
+        </div>
+        
+        <!-- Common Parameters (Both Trackers) -->
         <div class="row">
           <div><label>Track Buffer (frames)
             <input type="number" id="track_buffer" value="30" min="10" max="90"/>
           </label></div>
-          <div><label>Min Track Age (frames)
-            <input type="number" id="min_track_age" value="5" min="1" max="20"/>
-          </label></div>
+          <div></div>
         </div>
         <div class="row">
           <div><label>Track High Threshold
@@ -560,13 +569,59 @@
           <div><label>Match Threshold (IoU)
             <input type="number" step="0.05" min="0.5" max="0.95" id="match_thresh" value="0.8"/>
           </label></div>
+          <div><label>New Track Threshold
+            <input type="number" step="0.05" min="0.1" max="0.95" id="new_track_thresh" value="0.6"/>
+          </label></div>
+        </div>
+        <div class="row">
+          <div><label>Fuse Score
+            <select id="fuse_score">
+              <option value="true">True</option>
+              <option value="false">False</option>
+            </select>
+          </label></div>
           <div></div>
         </div>
+        
+        <!-- BoT-SORT Specific Parameters -->
+        <div id="botsortOnlyParams" style="display: none;">
+          <h4 style="font-size: 12px; margin: 12px 0 8px 0; color: #FFB366;">BoT-SORT Specific</h4>
+          <div class="row">
+            <div><label>GMC Method
+              <select id="gmc_method">
+                <option value="sparseOptFlow">Sparse Optical Flow</option>
+                <option value="orb">ORB</option>
+                <option value="none">None</option>
+              </select>
+            </label></div>
+            <div><label>Enable ReID
+              <select id="with_reid">
+                <option value="false">False</option>
+                <option value="true">True</option>
+              </select>
+            </label></div>
+          </div>
+          <div class="row">
+            <div><label>Proximity Threshold (ReID)
+              <input type="number" step="0.05" min="0.1" max="0.95" id="proximity_thresh" value="0.5"/>
+            </label></div>
+            <div><label>Appearance Threshold (ReID)
+              <input type="number" step="0.05" min="0.1" max="0.95" id="appearance_thresh" value="0.8"/>
+            </label></div>
+          </div>
+        </div>
+        
         <div class="muted" style="margin-top: 8px;">
           <strong>Track Buffer:</strong> Frames to keep lost tracks alive (at 30 FPS: 30 = 1s)<br>
-          <strong>Min Track Age:</strong> Frames a track must exist before counting<br>
           <strong>High/Low Thresh:</strong> Confidence for initial detection / re-detection<br>
-          <strong>Match Thresh:</strong> IoU threshold for matching detections to tracks
+          <strong>Match Thresh:</strong> IoU threshold for matching detections to tracks<br>
+          <strong>New Track Thresh:</strong> Threshold to initialize a new track<br>
+          <strong>Fuse Score:</strong> Combine detection score with IoU for matching<br>
+          <div id="botsortHelpText" style="display: none;">
+            <strong>GMC Method:</strong> Global motion compensation for moving cameras<br>
+            <strong>ReID:</strong> Re-identification using appearance features<br>
+            <strong>Proximity/Appearance:</strong> Thresholds for ReID matching
+          </div>
         </div>
       </div>
     </section>
@@ -669,8 +724,20 @@
       const method = $("stab_method").value;
       $("medianFrameCountRow").style.display = (method === "Median") ? "block" : "none";
       $("bytetrackConfig").style.display = (method === "Tracking") ? "block" : "none";
+      if (method === "Tracking") {
+        showTrackerFields();
+      }
     }
     $("stab_method").addEventListener("change", showStabilizationFields);
+    
+    // Tracker type field visibility
+    function showTrackerFields() {
+      const trackerType = $("tracker_type").value;
+      const isBotsort = trackerType === "botsort";
+      $("botsortOnlyParams").style.display = isBotsort ? "block" : "none";
+      $("botsortHelpText").style.display = isBotsort ? "block" : "none";
+    }
+    $("tracker_type").addEventListener("change", showTrackerFields);
 
     // Polygon editor functionality
     const canvas = document.getElementById("polyCanvas");
@@ -1100,13 +1167,24 @@
         $("max_delta_per_detection").value = cfg.count_stabilization?.max_delta_per_detection ?? 1;
         $("median_frame_count").value = cfg.count_stabilization?.median_frame_count ?? 3;
         
-        // ByteTrack configuration
-        const bytetrack = cfg.count_stabilization?.bytetrack || {};
-        $("track_buffer").value = bytetrack.track_buffer ?? 30;
-        $("track_high_thresh").value = bytetrack.track_high_thresh ?? 0.6;
-        $("track_low_thresh").value = bytetrack.track_low_thresh ?? 0.1;
-        $("match_thresh").value = bytetrack.match_thresh ?? 0.8;
-        $("min_track_age").value = bytetrack.min_track_age ?? 5;
+        // Tracking configuration
+        const trackerType = cfg.count_stabilization?.tracker_type ?? "bytetrack";
+        $("tracker_type").value = trackerType;
+        
+        // Load parameters based on selected tracker
+        const trackerCfg = cfg.count_stabilization?.[trackerType] || {};
+        $("track_buffer").value = trackerCfg.track_buffer ?? 30;
+        $("track_high_thresh").value = trackerCfg.track_high_thresh ?? 0.6;
+        $("track_low_thresh").value = trackerCfg.track_low_thresh ?? 0.1;
+        $("match_thresh").value = trackerCfg.match_thresh ?? 0.8;
+        $("new_track_thresh").value = trackerCfg.new_track_thresh ?? 0.6;
+        $("fuse_score").value = String(trackerCfg.fuse_score ?? true);
+        
+        // BoT-SORT specific
+        $("gmc_method").value = trackerCfg.gmc_method ?? "sparseOptFlow";
+        $("proximity_thresh").value = trackerCfg.proximity_thresh ?? 0.5;
+        $("appearance_thresh").value = trackerCfg.appearance_thresh ?? 0.8;
+        $("with_reid").value = String(trackerCfg.with_reid ?? false);
         
         // Update field visibility based on loaded config
         showStabilizationFields();
@@ -1184,12 +1262,26 @@
             ema_alpha: Number($("ema_alpha").value),
             max_delta_per_detection: Number($("max_delta_per_detection").value),
             median_frame_count: Number($("median_frame_count").value),
+            tracker_type: $("tracker_type").value,
             bytetrack: {
               track_buffer: Number($("track_buffer").value),
               track_high_thresh: Number($("track_high_thresh").value),
               track_low_thresh: Number($("track_low_thresh").value),
               match_thresh: Number($("match_thresh").value),
-              min_track_age: Number($("min_track_age").value)
+              new_track_thresh: Number($("new_track_thresh").value),
+              fuse_score: $("fuse_score").value === "true"
+            },
+            botsort: {
+              track_buffer: Number($("track_buffer").value),
+              track_high_thresh: Number($("track_high_thresh").value),
+              track_low_thresh: Number($("track_low_thresh").value),
+              match_thresh: Number($("match_thresh").value),
+              new_track_thresh: Number($("new_track_thresh").value),
+              fuse_score: $("fuse_score").value === "true",
+              gmc_method: $("gmc_method").value,
+              proximity_thresh: Number($("proximity_thresh").value),
+              appearance_thresh: Number($("appearance_thresh").value),
+              with_reid: $("with_reid").value === "true"
             }
           },
           

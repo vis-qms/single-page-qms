@@ -15,11 +15,11 @@
     "webcam_index": 0
   },
   "runtime": {
-    "frame_read_fps": 30,
+    "frame_read_fps": 60,
     "detection_interval": 2,
     "half_precision": false,
     "image_quality": "High (Sharp)",
-    "confidence_threshold": 0.3,
+    "confidence_threshold": 0.6,
     "imgsz": 640,
     "enable_cropping": false,
     "crop_left": 0,
@@ -41,14 +41,28 @@
     "method": "Tracking",
     "avg_window_frames": 3,
     "ema_alpha": 0.65,
-    "max_delta_per_detection": 1,
+    "max_delta_per_detection": 2,
     "median_frame_count": 5,
+    "tracker_type": "bytetrack",
     "bytetrack": {
-      "track_buffer": 20,
-      "track_high_thresh": 0.5,
-      "track_low_thresh": 0.6,
+      "track_buffer": 120,
+      "track_high_thresh": 0.6,
+      "track_low_thresh": 0.3,
       "match_thresh": 0.7,
-      "min_track_age": 3
+      "new_track_thresh": 0.5,
+      "fuse_score": false
+    },
+    "botsort": {
+      "track_buffer": 120,
+      "track_high_thresh": 0.6,
+      "track_low_thresh": 0.3,
+      "match_thresh": 0.7,
+      "new_track_thresh": 0.5,
+      "fuse_score": false,
+      "gmc_method": "sparseOptFlow",
+      "proximity_thresh": 0.5,
+      "appearance_thresh": 0.8,
+      "with_reid": false
     }
   },
   "polygon_cropping": {

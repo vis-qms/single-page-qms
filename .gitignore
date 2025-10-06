@@ -123,4 +123,6 @@ Thumbs.db
 *.tmp
 *.temp
 
+# Debug and monitoring directories
 debug_images/
+empty_queue_frames/
