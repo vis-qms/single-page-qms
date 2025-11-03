@@ -5,7 +5,6 @@ import time
 import threading
 import random
 import pickle
-import queue
 from collections import deque
 from typing import Any, Dict, Optional, List
 from datetime import datetime
@@ -110,8 +109,8 @@ class SharedState:
         self.running = False
         self.thread = None                  # type: Optional[threading.Thread]
         
-        # Frame capture system (like legacy QMS)
-        self.frame_queue = queue.Queue(maxsize=2)  # Keep only latest frames
+        # Frame capture system (optimized for tracking - no queue needed)
+        # Tracking mode always uses latest frame via self.last_detection_frame
         self.capture_thread = None          # type: Optional[threading.Thread]
         self.capture_running = False
         self.current_stream_url = None
@@ -119,6 +118,13 @@ class SharedState:
         # Consecutive frame buffer for batch inference
         self.consecutive_frame_buffer = deque(maxlen=10)  # Store last 10 consecutive frames
         self.frame_buffer_lock = threading.Lock()  # Thread-safe access to frame buffer
+        
+        # FPS monitoring and warning system
+        self.actual_fps = 0.0               # Measured actual camera FPS
+        self.configured_fps = 0             # Target FPS from config
+        self.fps_warning_active = False     # True if FPS below threshold (80%)
+        self.fps_measurements = deque(maxlen=30)  # Rolling window for FPS calculation
+        self.last_frame_time = None         # Last frame timestamp for FPS calculation
 
         # Models + diagnostics
         self.model_cache = {}               # type: Dict[str, Any]
@@ -1111,13 +1117,6 @@ class SharedState:
         self.capture_running = False
         if self.capture_thread and self.capture_thread.is_alive():
             self.capture_thread.join(timeout=2.0)
-        
-        # Clear frame queue
-        while not self.frame_queue.empty():
-            try:
-                self.frame_queue.get_nowait()
-            except queue.Empty:
-                break
                 
         # Release capture
         if hasattr(self, '_frame_capture') and self._frame_capture is not None:
@@ -1156,10 +1155,42 @@ class SharedState:
             target_fps = int((cfg or {}).get("runtime", {}).get("frame_read_fps", 30))
             frame_interval = 1.0 / max(10, int(target_fps))
             
+            # Initialize FPS tracking
+            self.configured_fps = target_fps
+            self.last_frame_time = None
+            frame_count = 0
+            
             while self.capture_running and cap and cap.isOpened():
                 try:
                     ret, frame = cap.read()
                     if ret and frame is not None:
+                        # FPS measurement and warning system
+                        current_time = time.time()
+                        if self.last_frame_time is not None:
+                            frame_delta = current_time - self.last_frame_time
+                            if frame_delta > 0:
+                                instantaneous_fps = 1.0 / frame_delta
+                                self.fps_measurements.append(instantaneous_fps)
+                                
+                                # Calculate rolling average FPS every 30 frames
+                                if len(self.fps_measurements) >= 30:
+                                    self.actual_fps = sum(self.fps_measurements) / len(self.fps_measurements)
+                                    
+                                    # Check if actual FPS is below 80% of configured FPS
+                                    fps_threshold = self.configured_fps * 0.8
+                                    if self.actual_fps < fps_threshold:
+                                        if not self.fps_warning_active:
+                                            print(f"⚠️  FPS WARNING: Camera delivering {self.actual_fps:.1f} FPS, configured for {self.configured_fps} FPS")
+                                            print(f"⚠️  Actual FPS is {(self.actual_fps/self.configured_fps*100):.1f}% of configured - consider reducing frame_read_fps")
+                                            self.fps_warning_active = True
+                                    else:
+                                        if self.fps_warning_active:
+                                            print(f"✅ FPS OK: Camera now delivering {self.actual_fps:.1f} FPS (target: {self.configured_fps} FPS)")
+                                            self.fps_warning_active = False
+                        
+                        self.last_frame_time = current_time
+                        frame_count += 1
+                        
                         cfg = self.get_config()
                         
                         # Create display frame with overlay (for preview)
@@ -1168,35 +1199,20 @@ class SharedState:
                         # Create detection frame with cropping (for AI processing)
                         detection_frame = self._apply_crop_for_detection(frame, cfg)
                         
-                        # LEGACY QMS OPTIMIZATION: Smart queue management
-                        # Always discard old frames, keep only the latest (non-blocking)
-                        try:
-                            # Remove old frame if queue not empty (legacy QMS pattern)
-                            if not self.frame_queue.empty():
-                                try:
-                                    self.frame_queue.get_nowait()  # Discard old frame
-                                except queue.Empty:
-                                    pass
-                            # Put new frame (non-blocking, timeout very short)
-                            self.frame_queue.put(display_frame, timeout=0.01)
+                        # TRACKING OPTIMIZATION: Always store latest frame (no queue needed)
+                        # Tracking mode processes frames as fast as they arrive
+                        with self.lock:
+                            self.last_frame = display_frame.copy()  # For legacy compatibility
+                            self.last_detection_frame = detection_frame.copy()  # For tracking/detection
+                            self.last_frame_ts = time.time()
                             
-                            # Store both frames for different uses (minimal locking)
-                            with self.lock:
-                                self.last_frame = display_frame.copy()  # For preview
-                                self.last_detection_frame = detection_frame.copy()  # For AI
-                                self.last_frame_ts = time.time()
-                                
-                            # Add frame to consecutive buffer for batch inference
-                            with self.frame_buffer_lock:
-                                self.consecutive_frame_buffer.append({
-                                    'frame': detection_frame.copy(),
-                                    'timestamp': time.time(),
-                                    'frame_id': len(self.consecutive_frame_buffer)
-                                })
-                                
-                        except queue.Full:
-                            # Queue full - skip this frame (legacy QMS behavior)
-                            pass
+                        # Add frame to consecutive buffer for batch inference (if needed for other modes)
+                        with self.frame_buffer_lock:
+                            self.consecutive_frame_buffer.append({
+                                'frame': detection_frame.copy(),
+                                'timestamp': time.time(),
+                                'frame_id': len(self.consecutive_frame_buffer)
+                            })
                             
                     else:
                         # Reconnect on read failure (legacy QMS pattern)
@@ -1228,14 +1244,14 @@ class SharedState:
                 except:
                     pass
             self.connected = False
+            
+            # Reset FPS tracking
+            self.actual_fps = 0.0
+            self.fps_warning_active = False
+            self.fps_measurements.clear()
+            self.last_frame_time = None
+            
             print(f"🎬 Optimized frame capture thread ended")
-    
-    def get_latest_frame(self):
-        """Get latest frame from queue (non-blocking like legacy QMS)"""
-        try:
-            return self.frame_queue.get_nowait()
-        except queue.Empty:
-            return None
     
     def get_latest_detection_frame(self):
         """Get latest detection frame (non-blocking, optimized for AI processing)"""
@@ -1306,6 +1322,9 @@ class SharedState:
             # LEGACY QMS OPTIMIZATION: Non-blocking frame access
             # Always get the LATEST frame, never wait for old frames
             detection_frame = self.get_latest_detection_frame()
+            
+            # Get current time (needed for both frame drop and normal processing)
+            now = time.time()
                     
             if detection_frame is None:
                 # Frame drop detected - use cached values and skip to next detection interval
@@ -1329,7 +1348,6 @@ class SharedState:
                 continue
                 
             frame_count += 1
-            now = time.time()
 
             # LEGACY QMS OPTIMIZATION: Detection interval timing
             # Clamp detection interval 0.1..10.0

@@ -88,6 +88,12 @@ def get_display_data():
                 "enabled": STATE.debug_enabled,
                 "probability": STATE.debug_probability,
                 "images_saved": STATE.debug_images_saved
+            },
+            "fps": {
+                "actual_fps": STATE.actual_fps,
+                "configured_fps": STATE.configured_fps,
+                "fps_warning": STATE.fps_warning_active,
+                "fps_percentage": round((STATE.actual_fps / STATE.configured_fps * 100), 1) if STATE.configured_fps > 0 else 0
             }
         }
 
@@ -134,22 +140,39 @@ def api_status():
                 "enabled": STATE.debug_enabled,
                 "probability": STATE.debug_probability,
                 "images_saved": STATE.debug_images_saved
+            },
+            "fps": {
+                "actual_fps": STATE.actual_fps,
+                "configured_fps": STATE.configured_fps,
+                "fps_warning": STATE.fps_warning_active,
+                "fps_percentage": round((STATE.actual_fps / STATE.configured_fps * 100), 1) if STATE.configured_fps > 0 else 0
             }
         }
 
+@app.get("/api/fps_status")
+def get_fps_status():
+    """Get current FPS monitoring status and camera performance"""
+    with STATE.lock:
+        fps_percentage = round((STATE.actual_fps / STATE.configured_fps * 100), 1) if STATE.configured_fps > 0 else 0
+        return {
+            "actual_fps": STATE.actual_fps,
+            "configured_fps": STATE.configured_fps,
+            "fps_warning": STATE.fps_warning_active,
+            "fps_percentage": fps_percentage,
+            "message": f"Camera delivering {STATE.actual_fps:.1f} FPS ({fps_percentage}% of configured {STATE.configured_fps} FPS)" if STATE.configured_fps > 0 else "FPS monitoring inactive"
+        }
 
 
 @app.get("/preview.mjpg")
 def mjpeg_preview(
     q: int = Query(75, ge=10, le=95),
     fps: int = Query(None, ge=1, le=60),
-    mode: str = Query("direct"),
     width: int = Query(960, ge=0, le=3840),
 ):
     """
-    Smooth MJPEG preview.
-    - mode=direct: open a fresh capture
-    - mode=state:  reuse frames from worker
+    Shared frame preview - reads frames already captured by detection thread.
+    Logically decoupled (independent processing) but shares frame source (efficient).
+    Instant access, no camera contention, works for webcam AND IP camera.
     """
     boundary = "frame"
 
@@ -159,93 +182,85 @@ def mjpeg_preview(
             frame = cv2.resize(frame, (width, h), interpolation=cv2.INTER_AREA)
         return frame
 
-    def gen_direct():
-        """Preview using queue frames (like legacy QMS) or direct capture when needed"""
+    def gen_shared_frame_preview():
+        """
+        Shared frame preview - reads from self.last_frame (already captured).
+        Logically decoupled from detection, shares frame source efficiently.
+        
+        Benefits:
+        - ⚡ Instant access (~1ms vs 30-50ms camera read)
+        - ✅ No camera contention (single VideoCapture)
+        - ✅ Works with webcam (no dual access)
+        - ✅ Works with IP camera (less bandwidth)
+        - ✅ Lower latency, better performance
+        """
+        print(f"🎥 PREVIEW: Starting shared frame preview (instant access, no camera contention)")
+        
+        # Get configuration
+        cfg = STATE.get_config()
+        
         # Use config FPS if not provided in query parameter
-        actual_fps = fps if fps is not None else STATE.get_config().get("runtime", {}).get("frame_read_fps", 20)
+        actual_fps = fps if fps is not None else cfg.get("runtime", {}).get("frame_read_fps", 20)
         frame_interval = 1.0 / float(actual_fps)
         next_t = time.time()
         
-        # If detection is running, use queue frames
-        if STATE.running and STATE.capture_running:
-            print(f"🎥 PREVIEW: Using optimized queue frames (detection running)")
-            while STATE.running and STATE.capture_running:
-                # LEGACY QMS OPTIMIZATION: Non-blocking frame access
-                frame = STATE.get_latest_frame()  # Always gets latest, never blocks
+        # If detection is not running, start frame capture for preview
+        if not STATE.capture_running:
+            print(f"🎥 PREVIEW: Detection not running, starting frame capture for preview")
+            STATE._start_frame_capture(cfg)
+            time.sleep(0.5)  # Give capture thread time to start
+        
+        frames_served = 0
+        last_log_time = time.time()
+        
+        try:
+            while True:
+                # Read latest frame from shared memory (instant!)
+                with STATE.lock:
+                    if STATE.last_frame is not None:
+                        frame = STATE.last_frame.copy()  # ⚡ Fast memory copy (~1ms)
+                    else:
+                        frame = None
+                
                 if frame is None:
-                    time.sleep(0.02)  # Short sleep, no blocking
+                    # No frame available yet, wait briefly
+                    time.sleep(0.02)
                     continue
-                    
+                
+                # Apply resize if needed
                 frame = resize_if_needed(frame)
+                
+                # Encode to JPEG
                 ok, jpeg = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), int(q)])
                 if not ok:
                     continue
+                
+                # Yield MJPEG frame
                 yield (b"--" + boundary.encode() + b"\r\n"
                        b"Content-Type: image/jpeg\r\n\r\n" + jpeg.tobytes() + b"\r\n")
-                       
+                
+                frames_served += 1
+                
+                # Log preview stats every 5 seconds
+                if time.time() - last_log_time > 5.0:
+                    print(f"🎥 PREVIEW: Served {frames_served} frames in 5s (~{frames_served/5:.1f} FPS)")
+                    frames_served = 0
+                    last_log_time = time.time()
+                
+                # FPS throttling
                 next_t += frame_interval
                 delay = next_t - time.time()
-                if delay > 0: time.sleep(delay)
-                else: next_t = time.time()
-            return
-        
-        # Detection not running - start our own frame capture for preview
-        print(f"🎥 PREVIEW: Detection not running, starting preview capture...")
-        cfg = STATE.get_config()
-        STATE._start_frame_capture(cfg)
-        
-        # Use queue frames even for preview-only mode
-        while not STATE.running:  # While detection is not running
-            # LEGACY QMS OPTIMIZATION: Non-blocking frame access for preview
-            frame = STATE.get_latest_frame()  # Always gets latest, never blocks
-            if frame is None:
-                time.sleep(0.02)  # Short sleep, no blocking
-                continue
-                
-            frame = resize_if_needed(frame)
-            ok, jpeg = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), int(q)])
-            if not ok:
-                continue
-            yield (b"--" + boundary.encode() + b"\r\n"
-                   b"Content-Type: image/jpeg\r\n\r\n" + jpeg.tobytes() + b"\r\n")
-                   
-            next_t += frame_interval
-            delay = next_t - time.time()
-            if delay > 0: time.sleep(delay)
-            else: next_t = time.time()
-
-    def gen_state():
-        """State mode - use queue frames like direct mode"""
-        # Use config FPS if not provided in query parameter
-        actual_fps = fps if fps is not None else STATE.get_config().get("runtime", {}).get("frame_read_fps", 20)
-        frame_interval = 1.0 / float(actual_fps)
-        next_t = time.time()
-        
-        while True:
-            frame = STATE.get_latest_frame()
-            if frame is None:
-                time.sleep(0.02)
-                continue
-                
-            frame = resize_if_needed(frame)
-            ok, jpeg = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), int(q)])
-            if not ok:
-                continue
-            yield (b"--" + boundary.encode() + b"\r\n"
-                   b"Content-Type: image/jpeg\r\n\r\n" + jpeg.tobytes() + b"\r\n")
-            next_t += frame_interval
-            delay = next_t - time.time()
-            if delay > 0: time.sleep(delay)
-            else: next_t = time.time()
-
-    # Auto-switch to state mode if detection is running to avoid camera conflicts
-    if STATE.running and mode == "direct":
-        print(f"🎥 PREVIEW: Auto-switching to state mode (detection running)")
-        generator = gen_state
-    else:
-        generator = gen_direct if mode == "direct" else gen_state
+                if delay > 0:
+                    time.sleep(delay)
+                else:
+                    next_t = time.time()
+                    
+        except Exception as e:
+            print(f"❌ PREVIEW: Error - {e}")
+        finally:
+            print(f"🎥 PREVIEW: Stream ended")
     
-    return StreamingResponse(generator(), media_type=f"multipart/x-mixed-replace; boundary={boundary}")
+    return StreamingResponse(gen_shared_frame_preview(), media_type=f"multipart/x-mixed-replace; boundary={boundary}")
 
 # Enhanced API Endpoints
 @app.post("/api/config/save")
@@ -386,6 +401,12 @@ async def websocket_status(websocket: WebSocket):
                         "enabled": STATE.debug_enabled,
                         "probability": STATE.debug_probability,
                         "images_saved": STATE.debug_images_saved
+                    },
+                    "fps": {
+                        "actual_fps": STATE.actual_fps,
+                        "configured_fps": STATE.configured_fps,
+                        "fps_warning": STATE.fps_warning_active,
+                        "fps_percentage": round((STATE.actual_fps / STATE.configured_fps * 100), 1) if STATE.configured_fps > 0 else 0
                     },
                     "timestamp": time.time()
                 }
