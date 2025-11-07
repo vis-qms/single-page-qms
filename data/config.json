@@ -16,7 +16,7 @@
   },
   "runtime": {
     "frame_read_fps": 60,
-    "detection_interval": 2,
+    "detection_interval": 3,
     "half_precision": false,
     "image_quality": "High (Sharp)",
     "confidence_threshold": 0.6,
@@ -35,13 +35,14 @@
     "primary_iou": 0.68,
     "secondary_iou": 0.7,
     "min_height_ratio": 0.018,
-    "min_area_ratio": 0.00015
+    "min_area_ratio": 0.00015,
+    "device": "cpu"
   },
   "count_stabilization": {
     "method": "Tracking",
     "avg_window_frames": 3,
     "ema_alpha": 0.65,
-    "max_delta_per_detection": 2,
+    "max_delta_per_detection": 1,
     "median_frame_count": 5,
     "tracker_type": "bytetrack",
     "bytetrack": {
@@ -66,28 +67,49 @@
     }
   },
   "polygon_cropping": {
-    "enabled": false,
+    "enabled": true,
     "points_count": 4,
     "points": [
       {
-        "x": 0.15039672851562497,
-        "y": 0.04479166666666667
+        "x": 0.04375610351562496,
+        "y": 0.025
       },
       {
         "x": 0.908929594647049,
         "y": 0.022604839918752784
       },
       {
-        "x": 0.8852701428809079,
-        "y": 0.9353339124969964
+        "x": 0.944927978515625,
+        "y": 0.9354166666666667
       },
       {
-        "x": 0.08828735351562496,
-        "y": 0.940625
+        "x": 0.06953735351562496,
+        "y": 0.9416666666666667
       },
       {
-        "x": 0.13164672851562498,
-        "y": 0.46979166666666666
+        "x": 0.04844360351562496,
+        "y": 0.4979166666666667
+      }
+    ]
+  },
+  "center_box_filter": {
+    "enabled": true,
+    "points": [
+      {
+        "x": 0.1,
+        "y": 0.1
+      },
+      {
+        "x": 0.9,
+        "y": 0.1
+      },
+      {
+        "x": 0.9,
+        "y": 0.9
+      },
+      {
+        "x": 0.1,
+        "y": 0.9
       }
     ]
   },

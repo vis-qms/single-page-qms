@@ -443,7 +443,15 @@
             <div><label>People Adjustment
               <input type="number" id="people_adjustment" value="-1" min="-10" max="10"/>
             </label></div>
-            <div></div>
+            <div><label>Device (Inference)
+              <select id="device">
+                <option value="cpu">CPU</option>
+                <option value="cuda:0">CUDA:0 (GPU 0)</option>
+                <option value="0">GPU 0 (Auto)</option>
+                <option value="cuda:1">CUDA:1 (GPU 1)</option>
+                <option value="1">GPU 1 (Auto)</option>
+              </select>
+            </label></div>
           </div>
           <div class="row">
             <div><label>Min Height Ratio
@@ -504,6 +512,65 @@
           <textarea id="poly_points" style="height:80px;" placeholder='[{"x":0.0,"y":0.0},{"x":1.0,"y":0.0},{"x":1.0,"y":1.0},{"x":0.0,"y":1.0}]'></textarea>
         </label>
         <div class="muted">Click on preview to add points, drag to move them</div>
+      </div>
+      
+      <!-- Center-Box Region Filter -->
+      <div id="centerBoxCropping">
+        <h3 style="font-size: 14px; margin: 12px 0 8px 0;">Center-Box Region Filter</h3>
+        <div class="row">
+          <div><label>Enable Center-Box Filter
+            <select id="center_box_enabled">
+              <option value="false">Disabled</option>
+              <option value="true">Enabled</option>
+            </select></label></div>
+          <div><div class="muted" style="margin-top: 8px;">Filter detections by bounding box center</div></div>
+        </div>
+        
+        <!-- Point 1 (Top-Left) -->
+        <div class="row">
+          <div><label>Point 1 X (0-1)
+            <input type="number" step="0.001" min="0" max="1" id="center_p1_x" value="0.1"/>
+          </label></div>
+          <div><label>Point 1 Y (0-1)
+            <input type="number" step="0.001" min="0" max="1" id="center_p1_y" value="0.1"/>
+          </label></div>
+        </div>
+        
+        <!-- Point 2 (Top-Right) -->
+        <div class="row">
+          <div><label>Point 2 X (0-1)
+            <input type="number" step="0.001" min="0" max="1" id="center_p2_x" value="0.9"/>
+          </label></div>
+          <div><label>Point 2 Y (0-1)
+            <input type="number" step="0.001" min="0" max="1" id="center_p2_y" value="0.1"/>
+          </label></div>
+        </div>
+        
+        <!-- Point 3 (Bottom-Right) -->
+        <div class="row">
+          <div><label>Point 3 X (0-1)
+            <input type="number" step="0.001" min="0" max="1" id="center_p3_x" value="0.9"/>
+          </label></div>
+          <div><label>Point 3 Y (0-1)
+            <input type="number" step="0.001" min="0" max="1" id="center_p3_y" value="0.9"/>
+          </label></div>
+        </div>
+        
+        <!-- Point 4 (Bottom-Left) -->
+        <div class="row">
+          <div><label>Point 4 X (0-1)
+            <input type="number" step="0.001" min="0" max="1" id="center_p4_x" value="0.1"/>
+          </label></div>
+          <div><label>Point 4 Y (0-1)
+            <input type="number" step="0.001" min="0" max="1" id="center_p4_y" value="0.9"/>
+          </label></div>
+        </div>
+        
+        <div class="muted" style="margin-top: 8px;">
+          <strong>Center-Box Filter:</strong> Only count detections whose center point falls inside this region<br>
+          Works with polygon cropping - polygon masks image, center-box filters detections<br>
+          An orange dashed rectangle will be shown in the preview
+        </div>
       </div>
     </section>
   
@@ -866,6 +933,45 @@
           });
         }
       }
+      
+      // Draw center-box filter region if enabled
+      if ($("center_box_enabled") && $("center_box_enabled").value === "true") {
+        const centerBoxPoints = [
+          { x: parseFloat($("center_p1_x").value), y: parseFloat($("center_p1_y").value) },
+          { x: parseFloat($("center_p2_x").value), y: parseFloat($("center_p2_y").value) },
+          { x: parseFloat($("center_p3_x").value), y: parseFloat($("center_p3_y").value) },
+          { x: parseFloat($("center_p4_x").value), y: parseFloat($("center_p4_y").value) }
+        ];
+        
+        // Draw region (orange/yellow dashed to distinguish from polygon)
+        ctx.strokeStyle = "#FFB366";
+        ctx.lineWidth = 3;
+        ctx.setLineDash([10, 5]);  // Dashed line to distinguish from polygon
+        ctx.beginPath();
+        centerBoxPoints.forEach((p, i) => {
+          const {x, y} = normToPx(p);
+          if (i === 0) ctx.moveTo(x, y); 
+          else ctx.lineTo(x, y);
+        });
+        ctx.closePath();
+        ctx.stroke();
+        ctx.setLineDash([]);  // Reset to solid line
+        
+        // Draw corner markers
+        ctx.fillStyle = "#FFB366";
+        centerBoxPoints.forEach((p, idx) => {
+          const {x, y} = normToPx(p);
+          ctx.beginPath();
+          ctx.arc(x, y, 8, 0, Math.PI * 2);
+          ctx.fill();
+          
+          // Add labels
+          ctx.fillStyle = "#000";
+          ctx.font = "bold 12px Arial";
+          ctx.fillText(`C${idx+1}`, x - 4, y + 4);
+          ctx.fillStyle = "#FFB366";
+        });
+      }
     }
 
     function nearestPointIdx(x, y) {
@@ -1024,6 +1130,19 @@
       loadPolyFromTextarea();
       autosavePolygonDebounced();
     });
+    
+    // Center-box filter input listeners - redraw on change
+    ["center_p1_x", "center_p1_y", "center_p2_x", "center_p2_y", 
+     "center_p3_x", "center_p3_y", "center_p4_x", "center_p4_y",
+     "center_box_enabled"].forEach(id => {
+      const elem = $(id);
+      if (elem) {
+        elem.addEventListener("input", () => {
+          drawPoly();
+          autosaveCenterBoxDebounced();
+        });
+      }
+    });
 
     // Debounce utility
     function debounce(fn, ms) {
@@ -1057,6 +1176,31 @@
       }
     }
     const autosavePolygonDebounced = debounce(autosavePolygon, 500);
+    
+    // Auto-save center-box filter changes
+    async function autosaveCenterBox() {
+      try {
+        const cfg = await getCurrentConfig();
+        cfg.center_box_filter = {
+          enabled: $("center_box_enabled").value === "true",
+          points: [
+            { x: parseFloat($("center_p1_x").value), y: parseFloat($("center_p1_y").value) },
+            { x: parseFloat($("center_p2_x").value), y: parseFloat($("center_p2_y").value) },
+            { x: parseFloat($("center_p3_x").value), y: parseFloat($("center_p3_y").value) },
+            { x: parseFloat($("center_p4_x").value), y: parseFloat($("center_p4_y").value) }
+          ]
+        };
+        
+        await fetch("/api/config", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(cfg)
+        });
+      } catch(e) {
+        console.error("Center-box auto-save failed:", e);
+      }
+    }
+    const autosaveCenterBoxDebounced = debounce(autosaveCenterBox, 500);
 
     // Get current config from server
     async function getCurrentConfig() {
@@ -1139,6 +1283,7 @@
         $("people_adjustment").value = cfg.runtime?.people_adjustment ?? -1;
         $("min_height_ratio").value = cfg.runtime?.min_height_ratio ?? 0.018;
         $("min_area_ratio").value = cfg.runtime?.min_area_ratio ?? 0.00015;
+        $("device").value = cfg.runtime?.device ?? "cpu";
         
         // Cropping
         $("enable_cropping").value = String(cfg.runtime?.enable_cropping ?? false);
@@ -1188,6 +1333,19 @@
         
         // Update field visibility based on loaded config
         showStabilizationFields();
+        
+        // Center-box filter configuration
+        $("center_box_enabled").value = String(cfg.center_box_filter?.enabled ?? false);
+        if (cfg.center_box_filter?.points && cfg.center_box_filter.points.length === 4) {
+          $("center_p1_x").value = cfg.center_box_filter.points[0].x;
+          $("center_p1_y").value = cfg.center_box_filter.points[0].y;
+          $("center_p2_x").value = cfg.center_box_filter.points[1].x;
+          $("center_p2_y").value = cfg.center_box_filter.points[1].y;
+          $("center_p3_x").value = cfg.center_box_filter.points[2].x;
+          $("center_p3_y").value = cfg.center_box_filter.points[2].y;
+          $("center_p4_x").value = cfg.center_box_filter.points[3].x;
+          $("center_p4_y").value = cfg.center_box_filter.points[3].y;
+        }
         
         // Wait time
         $("per_person_time_min").value = cfg.runtime?.per_person_time_min ?? 22;
@@ -1253,7 +1411,8 @@
             primary_iou: Number($("primary_iou").value),
             secondary_iou: Number($("secondary_iou").value),
             min_height_ratio: Number($("min_height_ratio").value),
-            min_area_ratio: Number($("min_area_ratio").value)
+            min_area_ratio: Number($("min_area_ratio").value),
+            device: $("device").value
           },
           
           count_stabilization: {
@@ -1289,6 +1448,16 @@
             enabled: $("poly_enabled").value === "true",
             points_count: parseInt($("polygon_points_count").value),
             points: JSON.parse($("poly_points").value || "[]")
+          },
+          
+          center_box_filter: {
+            enabled: $("center_box_enabled").value === "true",
+            points: [
+              { x: parseFloat($("center_p1_x").value), y: parseFloat($("center_p1_y").value) },
+              { x: parseFloat($("center_p2_x").value), y: parseFloat($("center_p2_y").value) },
+              { x: parseFloat($("center_p3_x").value), y: parseFloat($("center_p3_y").value) },
+              { x: parseFloat($("center_p4_x").value), y: parseFloat($("center_p4_y").value) }
+            ]
           },
           
           display_config: {

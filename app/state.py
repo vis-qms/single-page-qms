@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional, List
 from datetime import datetime
 import cv2
 import numpy as np
-from ultralytics import YOLO
+from ultralytics import YOLO, solutions
 import torch
 import yaml
 
@@ -424,6 +424,75 @@ class SharedState:
         
         return display_frame
 
+    # ---------------- center-box filtering ----------------
+    
+    def _filter_detections_by_center_box(self, detections, frame_shape, cfg):
+        """
+        Filter detections keeping only those whose center point is inside the region.
+        Based on Ultralytics QueueManager logic: center = ((x1+x2)/2, (y1+y2)/2)
+        
+        This is a detection filter (not a stabilization method) that works with all
+        stabilization methods (EMA, Rolling, Median, Tracking).
+        
+        Args:
+            detections: List of detection dicts with 'bbox' key
+            frame_shape: Shape of the frame (h, w, c)
+            cfg: Configuration dict
+        
+        Returns:
+            Filtered list of detections
+        """
+        from shapely.geometry import Point, Polygon
+        
+        center_box_cfg = (cfg or {}).get("center_box_filter", {}) or {}
+        if not center_box_cfg.get("enabled"):
+            return detections  # No filtering if disabled
+        
+        points = center_box_cfg.get("points") or []
+        if len(points) < 3:
+            print("⚠️  Center-box filter: Need at least 3 points for polygon")
+            return detections
+        
+        h, w = frame_shape[:2]
+        
+        # Convert normalized points to pixel coordinates
+        pixel_points = []
+        for p in points:
+            try:
+                x = int(float(p["x"]) * w)
+                y = int(float(p["y"]) * h)
+                x = max(0, min(w, x))
+                y = max(0, min(h, y))
+                pixel_points.append((x, y))
+            except Exception as e:
+                print(f"❌ Center-box filter: Error converting point {p}: {e}")
+                return detections
+        
+        # Create polygon from points
+        try:
+            polygon = Polygon(pixel_points)
+        except Exception as e:
+            print(f"⚠️  Center-box filter: Invalid polygon - {e}")
+            return detections
+        
+        # Filter detections by center point (Ultralytics QueueManager logic)
+        filtered = []
+        for det in detections:
+            bbox = det.get('bbox', [])
+            if len(bbox) >= 4:
+                # Calculate center of bounding box: center = ((x1+x2)/2, (y1+y2)/2)
+                center_x = (bbox[0] + bbox[2]) / 2.0
+                center_y = (bbox[1] + bbox[3]) / 2.0
+                
+                # Check if center is inside polygon
+                if polygon.contains(Point(center_x, center_y)):
+                    filtered.append(det)
+        
+        if len(filtered) != len(detections):
+            print(f"🔍 Center-box filter: {len(detections)} detections → {len(filtered)} inside region")
+        
+        return filtered
+
     # ---------------- models ----------------
 
     def _get_model_params(self, cfg):
@@ -563,6 +632,9 @@ class SharedState:
         # Apply confidence filtering for final count only
         user_conf_threshold = params.get('user_conf_threshold', 0.5)
         final_detections = [d for d in kept if d['confidence'] >= user_conf_threshold]
+        
+        # Apply center-box filtering (if enabled)
+        final_detections = self._filter_detections_by_center_box(final_detections, frame.shape, cfg)
         
         return {
             'people_count': len(final_detections),
@@ -728,6 +800,9 @@ class SharedState:
                 user_conf_threshold = params.get('user_conf_threshold', 0.5)
                 final_detections = [d for d in kept if d['confidence'] >= user_conf_threshold]
                 
+                # Apply center-box filtering (if enabled)
+                final_detections = self._filter_detections_by_center_box(final_detections, frame.shape, cfg)
+                
                 batch_results.append({
                     'people_count': len(final_detections),
                     'detections': all_detections_for_debug,  # Debug gets ALL detections
@@ -892,6 +967,9 @@ class SharedState:
                             'bbox': [int(x1), int(y1), int(x2), int(y2)]
                         })
                 
+                # Apply center-box filtering (if enabled)
+                valid_tracks = self._filter_detections_by_center_box(valid_tracks, frame.shape, cfg)
+                
                 return {
                     'valid_tracks': valid_tracks,
                     'inference_time': inference_time,
@@ -907,6 +985,7 @@ class SharedState:
         except Exception as e:
             print(f"❌ Tracking error: {e}")
             return None
+    
     # ---------------- stabilization & wait-time ----------------
 
     def _stabilize(self, raw_count, cfg):
