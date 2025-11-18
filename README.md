@@ -23,19 +23,19 @@ A comprehensive, single-page Queue Management System with all advanced features 
 - **Test-Time Augmentation (TTA)**: Improved accuracy through augmentation
 - **Secondary IoU Suppression**: Advanced duplicate removal
 - **Geometric Filtering**: Min height/area ratio filtering
-- **ROI Support**: Rectangle and polygon region of interest
+- **Polygon ROI Support**: Flexible polygon region of interest
 - **Confidence Thresholding**: Configurable detection confidence
 
 ### 🎯 Count Stabilization
-- **Count Stabilization**: EMA and Rolling Average smoothing
+- **Tracking-Based Counting**: ByteTrack and BoT-SORT algorithms with persistent IDs
 - **Max Delta Limiting**: Prevent sudden count jumps
 - **People Adjustment**: Fine-tune final count with offset
 
-### 📐 Advanced Cropping
-- **Rectangle Cropping**: Percentage-based region selection
-- **Polygon Cropping**: Visual polygon editor with drag-and-drop
-- **Live Preview**: Real-time overlay visualization
+### 📐 Polygon Region of Interest
+- **Polygon ROI**: Visual polygon editor with drag-and-drop points
+- **Live Preview**: Real-time overlay visualization with dimming
 - **Normalized Coordinates**: Resolution-independent settings
+- **Flexible Shapes**: Support for 4-8 point polygons
 
 ### 🔮 Wait Time Prediction
 - **ML Prediction**: Airport check-in queue predictor model
@@ -105,10 +105,10 @@ python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
    - Set confidence threshold (0.5 default)
    - Configure image size and processing options
 
-3. **Region of Interest:**
-   - Enable rectangle or polygon cropping
-   - Use visual editor to define detection area
-   - Preview changes in real-time
+3. **Polygon Region of Interest:**
+   - Enable polygon ROI to focus on specific areas
+   - Use visual editor to define detection area with drag-and-drop
+   - Preview changes in real-time with overlay visualization
 
 4. **Start Detection:**
    - Click "Start Detection" button
@@ -121,9 +121,9 @@ python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```json
 {
   "count_stabilization": {
-    "method": "EMA",
-    "ema_alpha": 0.65,
-    "max_delta_per_detection": 1
+    "method": "Tracking",
+    "max_delta_per_detection": 1,
+    "tracker_type": "bytetrack"
   }
 }
 ```
@@ -250,7 +250,7 @@ This enhanced single-page QMS includes all features from the main FastAPI QMS ap
 
 - ✅ Advanced detection models (YOLOv8-12, RT-DETR, DETR)
 - ✅ Enhanced detection pipeline with TTA and filtering
-- ✅ EMA/Rolling average stabilization
+- ✅ Tracking-based counting (ByteTrack/BoT-SORT)
 - ✅ Polygon cropping with visual editor
 - ✅ ML-based wait time prediction
 - ✅ Professional display styling

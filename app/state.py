@@ -18,46 +18,6 @@ CONFIG_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "data", "config.json")
 )
 
-# Enhanced Detection Classes
-
-class CountStabilizer:
-    """Advanced count stabilization using EMA, Rolling Average, or 3-Frame Average (Median)"""
-    def __init__(self, method="EMA", ema_alpha=0.65, window_frames=3, max_delta=1):
-        self.method = method
-        self.ema_alpha = ema_alpha
-        self.window_frames = window_frames
-        self.max_delta = max_delta
-        self.ema_value = None
-        self.raw_buffer = []
-        self.committed_count = 0
-
-    def update(self, raw_count):
-        if self.method == "EMA":
-            if self.ema_value is None:
-                self.ema_value = float(raw_count)
-            self.ema_value = self.ema_alpha * float(raw_count) + (1.0 - self.ema_alpha) * float(self.ema_value)
-            averaged_count = int(round(self.ema_value))
-        elif self.method == "Median":
-            # Median stabilization - averaging is done at detection level (3 consecutive frames)
-            # Just pass through the already-averaged result
-            averaged_count = int(raw_count)
-        else:  # Rolling Average
-            self.raw_buffer.append(int(raw_count))
-            if len(self.raw_buffer) > self.window_frames:
-                self.raw_buffer = self.raw_buffer[-self.window_frames:]
-            averaged_count = int(round(sum(self.raw_buffer) / max(1, len(self.raw_buffer))))
-
-        # Rate-limit change per detection tick
-        delta = averaged_count - self.committed_count
-        if delta > self.max_delta:
-            self.committed_count = self.committed_count + self.max_delta
-        elif delta < -self.max_delta:
-            self.committed_count = self.committed_count - self.max_delta
-        else:
-            self.committed_count = averaged_count
-
-        return self.committed_count
-
 # Removed QueuePredictor - main app uses simple random calculation
 
 
@@ -69,8 +29,6 @@ class SharedState:
         # Live stats
         self.people_count = 0               # stabilized + adjusted
         self._raw_people_count = 0          # raw detector output
-        self._ema_value = None              # type: Optional[float]
-        self._rolling = deque(maxlen=10)    # rolling avg buffer
 
         self.wait_time = 0.0                # seconds
         self.last_frame = None              # BGR frame (display with overlay)
@@ -94,7 +52,6 @@ class SharedState:
         print(f"🐛 DEBUG INIT: enabled={self.debug_enabled}, probability={self.debug_probability}%")
         
         # Enhanced features
-        self.stabilizer = None              # Count stabilizer instance
         self.detection_history = deque(maxlen=200)  # Detection history
         self.total_detections = 0
         self.average_inference_time = 0.0
@@ -102,6 +59,9 @@ class SharedState:
         
         # Tracking mode max_delta state
         self._tracker_last_count = 0        # Last committed count for tracking mode
+        
+        # Tracking median averaging buffer
+        self._tracking_median_buffer = deque(maxlen=10)  # Buffer for median averaging in tracking mode
 
         # Runtime states
         self.connected = False
@@ -321,39 +281,12 @@ class SharedState:
 
     def _apply_crop_for_detection(self, frame, cfg):
         """
-        Apply cropping for AI detection exactly like legacy QMS.
-        This CROPS the frame size (like PIL crop), not just masks it.
+        Apply polygon masking for AI detection.
+        Masks areas outside the polygon ROI.
         """
-        rt = (cfg or {}).get("runtime", {}) or {}
         poly = (cfg or {}).get("polygon_cropping", {}) or {}
 
-        # Rectangular crop (like legacy crop_image function)
-        if bool(rt.get("enable_cropping", False)):
-            h, w = frame.shape[:2]
-            l = max(0, min(100, int(rt.get("crop_left", 0)))) / 100.0
-            t = max(0, min(100, int(rt.get("crop_top", 0)))) / 100.0
-            r = max(0, min(100, int(rt.get("crop_right", 100)))) / 100.0
-            b = max(0, min(100, int(rt.get("crop_bottom", 100)))) / 100.0
-            
-            # Convert to pixel coordinates with proper rounding
-            left = round(w * l)
-            top = round(h * t) 
-            right = round(w * r)
-            bottom = round(h * b)
-            
-            # Clamp to valid bounds
-            left = max(0, min(left, w))
-            top = max(0, min(top, h))
-            right = max(left, min(right, w))
-            bottom = max(top, min(bottom, h))
-            
-            # Actually crop the frame (like PIL crop)
-            if right > left and bottom > top:
-                frame = frame[top:bottom, left:right]
-                print(f"🔲 Rectangle crop applied: ({left},{top}) to ({right},{bottom}) -> {frame.shape}")
-
-        # Polygon mask (like legacy apply_polygon_mask_pil - keeps same frame size)
-        # Remove the rectangle cropping check - polygon should work independently
+        # Polygon mask - keeps same frame size, masks outside regions
         if bool(poly.get("enabled", False)):
             pts = poly.get("points") or []
             if isinstance(pts, list) and len(pts) >= 3:
@@ -370,35 +303,14 @@ class SharedState:
 
     def _apply_display_overlay(self, frame, cfg):
         """
-        Apply visual overlay for preview display (like legacy QMS).
-        Shows full frame with dimmed areas outside crop/polygon.
-        NO GREEN LINES - just dimming effect.
+        Apply visual overlay for preview display.
+        Shows polygon ROI with dimmed areas outside the region.
         """
-        rt = (cfg or {}).get("runtime", {}) or {}
         poly = (cfg or {}).get("polygon_cropping", {}) or {}
         
         display_frame = frame.copy()
         
-        # Rectangle cropping overlay - just dim outside, no green lines
-        if bool(rt.get("enable_cropping", False)):
-            h, w = frame.shape[:2]
-            l = max(0, min(100, int(rt.get("crop_left", 0)))) / 100.0
-            t = max(0, min(100, int(rt.get("crop_top", 0)))) / 100.0
-            r = max(0, min(100, int(rt.get("crop_right", 100)))) / 100.0
-            b = max(0, min(100, int(rt.get("crop_bottom", 100)))) / 100.0
-            x1, y1, x2, y2 = round(w * l), round(h * t), round(w * r), round(h * b)
-            x1 = max(0, min(w - 1, x1))
-            x2 = max(0, min(w, x2))
-            y1 = max(0, min(h - 1, y1))
-            y2 = max(0, min(h, y2))
-            
-            # Dim outside area only
-            overlay = (display_frame * 0.5).astype(np.uint8)
-            display_frame = overlay.copy()
-            if x2 > x1 and y2 > y1:
-                display_frame[y1:y2, x1:x2] = frame[y1:y2, x1:x2]  # Keep original inside
-        
-        # Polygon cropping overlay (like legacy draw_polygon_overlay_bgr) - no green lines
+        # Polygon overlay with visual feedback
         if bool(poly.get("enabled", False)):
             pts = poly.get("points") or []
             if isinstance(pts, list) and len(pts) >= 3:
@@ -408,7 +320,7 @@ class SharedState:
                 if len(pixel_points) >= 3:
                     poly_pts = np.array(pixel_points, dtype=np.int32)
                     
-                    # Create overlay with red polygon outline (exactly like fastapi-qms_copy)
+                    # Create overlay with red polygon outline
                     overlay = display_frame.copy()
                     cv2.polylines(overlay, [poly_pts], isClosed=True, color=(0, 0, 255), thickness=2)
                     
@@ -416,7 +328,7 @@ class SharedState:
                     mask = np.zeros((h, w), dtype=np.uint8)
                     cv2.fillPoly(mask, [poly_pts], 255)
                     
-                    # Dim everything to 30% (like fastapi-qms_copy)
+                    # Dim everything to 30%
                     dim = (display_frame * 0.3).astype(display_frame.dtype)
                     
                     # Show overlay (with red outline) inside polygon, dimmed outside
@@ -907,30 +819,7 @@ class SharedState:
         except Exception as e:
             print(f"❌ Tracking error: {e}")
             return None
-    # ---------------- stabilization & wait-time ----------------
-
-    def _stabilize(self, raw_count, cfg):
-        """
-        Enhanced stabilization using dedicated CountStabilizer class.
-        """
-        cs = (cfg or {}).get("count_stabilization", {}) or {}
-        method = (cs.get("method") or "EMA")
-        avg_window = int(cs.get("avg_window_frames", 3))
-        ema_alpha = float(cs.get("ema_alpha", 0.65))
-        max_delta = int(cs.get("max_delta_per_detection", 1))
-        
-        # Initialize or update stabilizer if config changed
-        stabilizer_cfg = (method, ema_alpha, avg_window, max_delta)
-        if not hasattr(self, '_stabilizer_cfg') or self._stabilizer_cfg != stabilizer_cfg:
-            self.stabilizer = CountStabilizer(
-                method=method,
-                ema_alpha=ema_alpha,
-                window_frames=avg_window,
-                max_delta=max_delta
-            )
-            self._stabilizer_cfg = stabilizer_cfg
-        
-        return self.stabilizer.update(raw_count)
+    # ---------------- wait-time ----------------
 
     def _estimate_wait(self, count, cfg):
         """
@@ -1355,264 +1244,114 @@ class SharedState:
             det_interval = max(0.1, min(10.0, det_interval))
             
             time_since_last = now - last_det
-
-            # Check stabilization method to determine processing mode
-            stab_method = (cfg or {}).get("count_stabilization", {}).get("method", "EMA")
             
             # ============================================================
             # TRACKING MODE: Continuous tracking, update display at intervals
             # ============================================================
-            if stab_method == "Tracking":
-                # Track EVERY frame (tracker handles persistence)
-                tracking_result = self._track_frame(detection_frame, cfg)
-                
-                if tracking_result:
-                    # Update display at detection_interval
-                    time_since_last = now - last_det
-                    if time_since_last >= det_interval:
-                        # Trust ByteTrack/BoT-SORT - count the tracks it returns
-                        raw_track_count = len(tracking_result['valid_tracks'])
-                        
-                        # Apply max_delta protection for tracking mode (safety against sudden spikes)
-                        cs = (cfg or {}).get("count_stabilization", {}) or {}
-                        max_delta = int(cs.get("max_delta_per_detection", 1))
-                        
-                        delta = raw_track_count - self._tracker_last_count
-                        if delta > max_delta:
-                            people_count = self._tracker_last_count + max_delta
-                            print(f"🛡️  TRACKING: Rate limited +{delta} to +{max_delta} (from {self._tracker_last_count} to {people_count}, raw: {raw_track_count})")
-                        elif delta < -max_delta:
-                            people_count = self._tracker_last_count - max_delta
-                            print(f"🛡️  TRACKING: Rate limited {delta} to -{max_delta} (from {self._tracker_last_count} to {people_count}, raw: {raw_track_count})")
-                        else:
-                            people_count = raw_track_count
-                        
-                        # Update committed count for next detection
-                        self._tracker_last_count = people_count
-                        
-                        # Save frame with 0.25% probability when queue is empty (tracker mode only)
-                        if people_count == 0:
-                            # 0.25% = 0.0025 probability
-                            # Using random integer check: 1 out of 400 (0.25% = 1/400)
-                            if random.randint(1, 400) == 1:
-                                self._save_empty_queue_frame(detection_frame, now)
-                        
-                        # Calculate wait time
-                        wait_seconds = self._estimate_wait(people_count, cfg)
-                        
-                        with self.lock:
-                            self.people_count = people_count
-                            self.wait_time = wait_seconds
-                            self.last_frame_ts = now
-                            
-                            # Cache successful values
-                            self._last_successful_people_count = people_count
-                            self._last_successful_wait_time = wait_seconds
-                            self._last_successful_timestamp = now
-                        
-                        track_ids = [t['track_id'] for t in tracking_result['valid_tracks']]
-                        print(f"📊 TRACKING UPDATE:")
-                        print(f"   Active tracks: {sorted(track_ids)}")
-                        print(f"   Raw track count: {raw_track_count}")
-                        print(f"   Rate-limited count: {people_count} (max_delta: ±{max_delta})")
-                        print(f"   Wait time: {wait_seconds:.1f}s ({wait_seconds/60:.1f} min)")
-                        print(f"   Inference: {tracking_result['inference_time']*1000:.1f}ms")
-                        
-                        # Update telemetry
-                        self.total_detections += 1
-                        if len(self.detection_history) > 0:
-                            recent_times = [r['inference_time'] for r in list(self.detection_history)[-10:]]
-                            self.average_inference_time = sum(recent_times) / len(recent_times)
-                        else:
-                            self.average_inference_time = tracking_result['inference_time']
-                        
-                        # Add to detection history
-                        tracker_name = (cfg or {}).get("count_stabilization", {}).get("tracker_type", "bytetrack").upper()
-                        detection_record = {
-                            'timestamp': now,
-                            'people_count': people_count,
-                            'wait_time': wait_seconds / 60.0,
-                            'model_name': f"{tracker_name}-{tracking_result['model_name']}",
-                            'confidence': float((cfg or {}).get("runtime", {}).get("confidence_threshold", 0.5)),
-                            'inference_time': tracking_result['inference_time']
-                        }
-                        self.detection_history.append(detection_record)
-                        
-                        last_det = now
-                
-                # No sleep - process next frame immediately for continuous tracking
-                continue
+            # Track EVERY frame (tracker handles persistence)
+            tracking_result = self._track_frame(detection_frame, cfg)
             
-            # ============================================================
-            # BATCH/INTERVAL MODE: EMA and Median methods
-            # ============================================================
-            
-            # LEGACY QMS OPTIMIZATION: Process at intervals but on FRESH frames only
-            if time_since_last >= det_interval:
-                print(f"🤖 Starting detection inference (interval: {det_interval}s)")
-                
-                # Track total cycle start time
-                cycle_start_time = time.time()
-                
-                if stab_method == "Median":
-                    # Get configurable frame count (2-5, default 3)
-                    median_frame_count = int((cfg or {}).get("count_stabilization", {}).get("median_frame_count", 3))
-                    median_frame_count = max(2, min(5, median_frame_count))  # Clamp to 2-5 range
+            if tracking_result:
+                # Update display at detection_interval
+                time_since_last = now - last_det
+                if time_since_last >= det_interval:
+                    # Trust ByteTrack/BoT-SORT - count the tracks it returns
+                    raw_track_count = len(tracking_result['valid_tracks'])
                     
-                    print(f"🔄 Using BATCH Median stabilization - processing {median_frame_count} consecutive frames...")
+                    # Apply max_delta protection for tracking mode (safety against sudden spikes)
+                    cs = (cfg or {}).get("count_stabilization", {}) or {}
+                    max_delta = int(cs.get("max_delta_per_detection", 1))
                     
-                    # Get truly consecutive frames from buffer
-                    frame_list, frame_metadata = self.get_consecutive_frames(median_frame_count)
-                    
-                    if frame_list:
-                        # Batch inference on consecutive frames - MUCH faster!
-                        batch_results = self._infer_batch(frame_list, cfg)
-                        
-                        # Extract people counts and calculate average
-                        frame_results = [result['people_count'] for result in batch_results]
-                        total_inference_time = sum(result['inference_time'] for result in batch_results)
-                        
-                        # Calculate average people count
-                        raw_pc = int(round(sum(frame_results) / len(frame_results))) if frame_results else 0
-                        inference_time = total_inference_time / len(frame_results) if frame_results else 0.0
-                        model_name = f'{median_frame_count}-frame-batch'
-                        
-                        print(f"🔍 BATCH {median_frame_count}-Frame results: {frame_results} → Average: {raw_pc}")
-                        
-                        # Prepare frames for debug saving (with actual detections from batch)
-                        frames_for_debug = []
-                        for i, (result, frame_data) in enumerate(zip(batch_results, frame_metadata)):
-                            frames_for_debug.append({
-                                'frame': frame_data['frame'].copy(),
-                                'detections': result['detections'],
-                                'people_count': result['people_count'],
-                                'inference_time': result['inference_time']
-                            })
-                        
-                        # Save debug session with all frames
-                        if frames_for_debug:
-                            self._save_debug_session(frames_for_debug, raw_pc, model_name)
-                        
-                        # Use empty detections list for median mode (we don't track individual detections)
-                        detections = []
-                        
+                    delta = raw_track_count - self._tracker_last_count
+                    if delta > max_delta:
+                        people_count = self._tracker_last_count + max_delta
+                        print(f"🛡️  TRACKING: Rate limited +{delta} to +{max_delta} (from {self._tracker_last_count} to {people_count}, raw: {raw_track_count})")
+                    elif delta < -max_delta:
+                        people_count = self._tracker_last_count - max_delta
+                        print(f"🛡️  TRACKING: Rate limited {delta} to -{max_delta} (from {self._tracker_last_count} to {people_count}, raw: {raw_track_count})")
                     else:
-                        print("⚠️  Not enough consecutive frames in buffer, falling back to single frame")
-                        # Fallback to single frame detection with retry
-                        detection_frame = self.get_latest_detection_frame()
-                        if detection_frame is not None:
-                            result = self._infer(detection_frame, cfg)
-                            if isinstance(result, dict):
-                                raw_pc = result.get('people_count', 0)
-                                detections = result.get('detections', [])
-                                inference_time = result.get('inference_time', 0.0)
-                                model_name = 'single-frame-fallback'
-                            else:
-                                raw_pc = result if isinstance(result, int) else 0
-                                detections = []
-                                inference_time = 0.0
-                                model_name = 'legacy-fallback'
+                        people_count = raw_track_count
+                    
+                    # Update committed count for next detection
+                    self._tracker_last_count = people_count
+                    
+                    # Apply batch-based median averaging if enabled
+                    # Collects X frames, calculates average, displays, then starts fresh
+                    median_enabled = bool(cs.get("median_enabled", False))
+                    if median_enabled:
+                        median_frame_size = int(cs.get("median_frame_size", 5))
+                        median_frame_size = max(2, min(10, median_frame_size))  # Clamp to 2-10
+                        
+                        # Add current count to buffer
+                        self._tracking_median_buffer.append(people_count)
+                        
+                        # Check if buffer is full - calculate average and clear for fresh batch
+                        if len(self._tracking_median_buffer) >= median_frame_size:
+                            averaged_count = int(round(sum(self._tracking_median_buffer) / len(self._tracking_median_buffer)))
+                            print(f"📊 BATCH MEDIAN: Collected {list(self._tracking_median_buffer)} → Average: {averaged_count} → Starting fresh batch")
+                            people_count = averaged_count
+                            # Clear buffer for fresh batch
+                            self._tracking_median_buffer.clear()
                         else:
-                            # No frame available - use cached fallback and skip to next detection interval
-                            det_interval = float((cfg or {}).get("runtime", {}).get("detection_interval", 1.0))
-                            print(f"❌ DEBUG: No frame for batch fallback, using cached values and skipping interval ({det_interval}s)")
-                            
-                            cached_count = getattr(self, '_last_successful_people_count', 0)
-                            cached_wait = getattr(self, '_last_successful_wait_time', 0.0)
-                            cached_timestamp = getattr(self, '_last_successful_timestamp', 0.0)
-                            
-                            with self.lock:
-                                self.people_count = cached_count
-                                self.wait_time = cached_wait
-                                
-                                age_seconds = now - cached_timestamp if cached_timestamp > 0 else 0
-                                print(f"🔄 DEBUG: Batch fallback cached values: people_count={cached_count}, wait_time={cached_wait:.1f}s (cached {age_seconds:.1f}s ago)")
-                            
-                            # Skip to next detection interval
-                            last_det = now
-                            continue
-                    
-                else:
-                    # Single frame detection for EMA and Rolling methods
-                    detection_results = self._infer(detection_frame, cfg)
-                    print(f"🔍 Detection results: {detection_results if isinstance(detection_results, dict) else f'count={detection_results}'}")
-                    
-                    if isinstance(detection_results, dict):
-                        raw_pc = detection_results.get('people_count', 0)
-                        detections = detection_results.get('detections', [])
-                        inference_time = detection_results.get('inference_time', 0.0)
-                        model_name = detection_results.get('model_name', 'Unknown')
-                        
-                        # Debug images are now saved via batch system in median mode
+                            # Still collecting frames, use last displayed count
+                            print(f"📊 COLLECTING: {len(self._tracking_median_buffer)}/{median_frame_size} frames collected, using last count: {self.people_count}")
+                            people_count = self.people_count  # Keep displaying last averaged count
                     else:
-                        raw_pc = detection_results
-                        detections = []
-                        inference_time = 0.0
-                        model_name = 'Legacy'
-                        
-                        # Debug images are now saved via batch system in median mode
-                
-                
-                # Stabilize count
-                st_pc = self._stabilize(raw_pc, cfg)
-
-                # Apply people_adjustment after stabilization
-                adj = int((cfg or {}).get("runtime", {}).get("people_adjustment", -1))
-                final_count = max(0, st_pc + adj)
-                
-                # Calculate wait time
-                wait_seconds = self._estimate_wait(final_count, cfg)
-
-                # Calculate total cycle time
-                total_cycle_time = time.time() - cycle_start_time
-
-                with self.lock:
-                    self._raw_people_count = raw_pc
-                    self.people_count = final_count
-                    self.wait_time = wait_seconds
-                    self.total_cycle_time = total_cycle_time
+                        # Clear buffer if median is disabled
+                        self._tracking_median_buffer.clear()
                     
-                    # Cache successful detection values for frame drop fallback
-                    # Only cache if this was a successful detection (not a cached fallback)
-                    if not any(fallback_name in model_name for fallback_name in ['cached-fallback', 'cached-batch-fallback']):
-                        self._last_successful_people_count = final_count
+                    # Save frame with 0.25% probability when queue is empty (tracker mode only)
+                    if people_count == 0:
+                        # 0.25% = 0.0025 probability
+                        # Using random integer check: 1 out of 400 (0.25% = 1/400)
+                        if random.randint(1, 400) == 1:
+                            self._save_empty_queue_frame(detection_frame, now)
+                    
+                    # Calculate wait time
+                    wait_seconds = self._estimate_wait(people_count, cfg)
+                    
+                    with self.lock:
+                        self.people_count = people_count
+                        self.wait_time = wait_seconds
+                        self.last_frame_ts = now
+                        
+                        # Cache successful values
+                        self._last_successful_people_count = people_count
                         self._last_successful_wait_time = wait_seconds
                         self._last_successful_timestamp = now
-                        print(f"✅ Cached successful detection: count={final_count}, wait={wait_seconds:.1f}s")
                     
-                    # Get stabilization method for debug output
-                    stab_method = (cfg or {}).get("count_stabilization", {}).get("method", "EMA")
-                    
-                    print(f"📊 DETECTION UPDATE:")
-                    print(f"   Raw count: {raw_pc}")
-                    print(f"   Stabilized ({stab_method}): {st_pc}")
-                    print(f"   Final count: {final_count}")
-                    print(f"   Wait time: {wait_seconds:.1f}s")
-                    print(f"   Per-frame inference: {inference_time*1000:.1f}ms")
-                    print(f"   Total cycle time: {total_cycle_time*1000:.1f}ms")
+                    track_ids = [t['track_id'] for t in tracking_result['valid_tracks']]
+                    print(f"📊 TRACKING UPDATE:")
+                    print(f"   Active tracks: {sorted(track_ids)}")
+                    print(f"   Raw track count: {raw_track_count}")
+                    print(f"   Rate-limited count: {people_count} (max_delta: ±{max_delta})")
+                    print(f"   Wait time: {wait_seconds:.1f}s ({wait_seconds/60:.1f} min)")
+                    print(f"   Inference: {tracking_result['inference_time']*1000:.1f}ms")
                     
                     # Update telemetry
                     self.total_detections += 1
-                    print(f"   Total detections: {self.total_detections}")
-                    if self.total_detections > 0:
-                        if len(self.detection_history) > 0:
-                            recent_times = [r['inference_time'] for r in list(self.detection_history)[-10:]]
-                            self.average_inference_time = sum(recent_times) / len(recent_times)
-                        else:
-                            self.average_inference_time = inference_time
+                    if len(self.detection_history) > 0:
+                        recent_times = [r['inference_time'] for r in list(self.detection_history)[-10:]]
+                        self.average_inference_time = sum(recent_times) / len(recent_times)
+                    else:
+                        self.average_inference_time = tracking_result['inference_time']
                     
                     # Add to detection history
+                    tracker_name = (cfg or {}).get("count_stabilization", {}).get("tracker_type", "bytetrack").upper()
                     detection_record = {
                         'timestamp': now,
-                        'people_count': final_count,
-                        'wait_time': wait_seconds / 60.0,  # minutes
-                        'model_name': model_name,
+                        'people_count': people_count,
+                        'wait_time': wait_seconds / 60.0,
+                        'model_name': f"{tracker_name}-{tracking_result['model_name']}",
                         'confidence': float((cfg or {}).get("runtime", {}).get("confidence_threshold", 0.5)),
-                        'inference_time': inference_time
+                        'inference_time': tracking_result['inference_time']
                     }
                     self.detection_history.append(detection_record)
-
-                last_det = now
+                    
+                    last_det = now
+            
+            # No sleep - process next frame immediately for continuous tracking
+            continue
 
 
 STATE = SharedState()

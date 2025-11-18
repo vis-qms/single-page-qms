@@ -15,17 +15,12 @@
     "webcam_index": 0
   },
   "runtime": {
-    "frame_read_fps": 60,
-    "detection_interval": 2,
+    "frame_read_fps": 30,
+    "detection_interval": 1,
     "half_precision": false,
     "image_quality": "High (Sharp)",
     "confidence_threshold": 0.6,
     "imgsz": 640,
-    "enable_cropping": false,
-    "crop_left": 0,
-    "crop_top": 0,
-    "crop_right": 100,
-    "crop_bottom": 100,
     "per_person_time_min": 30,
     "per_person_time_max": 35,
     "people_adjustment": 0,
@@ -39,11 +34,10 @@
   },
   "count_stabilization": {
     "method": "Tracking",
-    "avg_window_frames": 3,
-    "ema_alpha": 0.65,
     "max_delta_per_detection": 2,
-    "median_frame_count": 5,
-    "tracker_type": "bytetrack",
+    "tracker_type": "botsort",
+    "median_enabled": true,
+    "median_frame_size": 5,
     "bytetrack": {
       "track_buffer": 120,
       "track_high_thresh": 0.6,
@@ -86,8 +80,12 @@
         "y": 0.940625
       },
       {
-        "x": 0.13164672851562498,
-        "y": 0.46979166666666666
+        "x": 0.05313110351562496,
+        "y": 0.6177083333333333
+      },
+      {
+        "x": 0.10938110351562497,
+        "y": 0.3072916666666667
       }
     ]
   },
