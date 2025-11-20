@@ -8,5 +8,5 @@ fuse_score: false
 gmc_method: sparseOptFlow
 proximity_thresh: 0.5
 appearance_thresh: 0.8
-with_reid: false
+with_reid: true
 model: auto

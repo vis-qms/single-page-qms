@@ -420,43 +420,7 @@ async def websocket_status(websocket: WebSocket):
 def healthz():
     return {"ok": True, "status": "running", "connected": STATE.connected}
 
-@app.post("/api/test_batch")
-def test_batch_inference():
-    """Test the new batch inference system"""
-    try:
-        # Check if we have enough frames in buffer
-        with STATE.frame_buffer_lock:
-            buffer_size = len(STATE.consecutive_frame_buffer)
-        
-        if buffer_size < 3:
-            return {"ok": False, "error": f"Not enough frames in buffer ({buffer_size}), need at least 3"}
-        
-        # Test getting consecutive frames
-        frame_list, frame_metadata = STATE.get_consecutive_frames(3)
-        
-        if not frame_list:
-            return {"ok": False, "error": "Failed to get consecutive frames"}
-        
-        # Test batch inference
-        cfg = STATE.get_config()
-        batch_results = STATE._infer_batch(frame_list, cfg)
-        
-        # Extract results
-        people_counts = [result['people_count'] for result in batch_results]
-        avg_count = sum(people_counts) / len(people_counts) if people_counts else 0
-        
-        return {
-            "ok": True,
-            "buffer_size": buffer_size,
-            "frames_processed": len(frame_list),
-            "people_counts": people_counts,
-            "average_count": avg_count,
-            "batch_results": len(batch_results),
-            "message": f"Batch inference successful! Processed {len(frame_list)} consecutive frames"
-        }
-        
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+
 
 @app.post("/api/test_connection")
 async def test_connection():

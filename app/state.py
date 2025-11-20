@@ -62,6 +62,11 @@ class SharedState:
         
         # Tracking median averaging buffer
         self._tracking_median_buffer = deque(maxlen=10)  # Buffer for median averaging in tracking mode
+        self._tracking_ids_buffer = deque(maxlen=10)     # Buffer for tracking IDs in median mode
+        
+        # Display update gating
+        self.last_display_update_time = 0.0
+        self._internal_count = 0            # Latest stable count (decoupled from display)
 
         # Runtime states
         self.connected = False
@@ -346,342 +351,13 @@ class SharedState:
             'user_conf_threshold': float(runtime.get("confidence_threshold", 0.5)),
             'imgsz': int(runtime.get("imgsz", 1280)),
             'half': bool(runtime.get("half_precision", False)),
-            'use_tta': bool(runtime.get("use_tta", False)),
             'max_det': int(runtime.get("max_det", 100)),
             'primary_iou': float(runtime.get("primary_iou", 0.68)),
-            'secondary_iou': float(runtime.get("secondary_iou", 0.70)),
             'min_height_ratio': float(runtime.get("min_height_ratio", 0.018)),
             'min_area_ratio': float(runtime.get("min_area_ratio", 0.00015))
         }
 
-    def _infer_ultralytics(self, frame, cfg):
-        """
-        Enhanced Ultralytics path with advanced detection features.
-        Returns detailed detection results with enhanced filtering.
-        """
-        runtime = (cfg or {}).get("runtime", {}) or {}
-        model_name = str(runtime.get("selected_model", "YOLOv11x"))
-        params = self._get_model_params(cfg)
 
-        # Enhanced model mapping
-        model_files = {
-            'YOLOv8m': 'yolov8m.pt',
-            'YOLOv8x': 'yolov8x.pt', 
-            'YOLOv9e': 'yolov9e.pt',
-            'YOLOv10x': 'yolov10x.pt',
-            'YOLOv11l': 'yolo11l.pt',
-            'YOLOv11x': 'yolo11x.pt',
-            'YOLOv12l': 'yolo12l.pt',
-            'YOLOv12x': 'yolo12x.pt',
-        }
-        
-        model_file = model_files.get(model_name, f"{model_name}.pt")
-        key = f"ultra::{model_file}::{params['half']}"
-        
-        if key not in self.model_cache:
-            try:
-                self.model_cache[key] = YOLO(model_file)
-            except Exception:
-                self.model_cache[key] = YOLO("yolov8m.pt")  # fallback
-                
-        model = self.model_cache[key]
-
-        if frame is None or frame.size == 0:
-            return {'people_count': 0, 'detections': [], 'inference_time': 0.0}
-
-        start_time = time.time()
-        
-        # Enhanced detection with TTA and max_det
-        with torch.inference_mode():
-            results = model.predict(
-                source=frame, 
-                imgsz=params['imgsz'], 
-                conf=params['conf'], 
-                iou=params['primary_iou'],  # Primary IoU for model's NMS
-                half=params['half'], 
-                verbose=False,
-                classes=[0],  # person only
-                max_det=params['max_det'],
-                augment=params['use_tta']
-            )
-        
-        inference_time = time.time() - start_time
-        h, w = frame.shape[:2]
-        img_area = float(max(1, h * w))
-        min_h = max(1.0, h * params['min_height_ratio'])
-        min_area = max(1.0, img_area * params['min_area_ratio'])
-        
-        # Get polygon ROI if enabled
-        poly = (cfg or {}).get("polygon_cropping", {}) or {}
-        roi_polygon = None
-        if bool(poly.get("enabled", False)):
-            pts = poly.get("points") or []
-            if len(pts) >= 3:
-                # Use IDENTICAL coordinate conversion as frontend polygon editor
-                pixel_points = self._polygon_points_to_pixels(pts, w, h)
-                roi_polygon = [(pt[0], pt[1]) for pt in pixel_points]
-        
-        def _inside_roi_center(bbox, polygon):
-            if not polygon:
-                return True
-            cx = int((bbox[0] + bbox[2]) * 0.5)
-            cy = int((bbox[1] + bbox[3]) * 0.5)
-            poly = np.array(polygon, dtype=np.int32).reshape(-1, 1, 2)
-            return cv2.pointPolygonTest(poly, (cx, cy), False) >= 0
-        
-        detections = []
-        for r in results:
-            for b in getattr(r, 'boxes', []) or []:
-                xyxy = b.xyxy[0].tolist()
-                score = float(b.conf[0].item())
-                x1, y1, x2, y2 = map(float, xyxy)
-                
-                # Apply enhanced filters
-                if (y2 - y1) < min_h:
-                    continue
-                if (x2 - x1) * (y2 - y1) < min_area:
-                    continue
-                if not _inside_roi_center([x1, y1, x2, y2], roi_polygon):
-                    continue
-                    
-                detections.append({
-                    'bbox': [int(x1), int(y1), int(x2), int(y2)],
-                    'confidence': score
-                })
-        
-        # Secondary IoU suppression
-        def _iou(a, b):
-            ax1, ay1, ax2, ay2 = a['bbox']
-            bx1, by1, bx2, by2 = b['bbox']
-            inter_x1 = max(ax1, bx1)
-            inter_y1 = max(ay1, by1)
-            inter_x2 = min(ax2, bx2)
-            inter_y2 = min(ay2, by2)
-            inter = max(0, inter_x2 - inter_x1) * max(0, inter_y2 - inter_y1)
-            area_a = max(0, ax2-ax1) * max(0, ay2-ay1)
-            area_b = max(0, bx2-bx1) * max(0, by2-by1)
-            union = area_a + area_b - inter + 1e-6
-            return inter / union
-        
-        detections.sort(key=lambda d: d['confidence'], reverse=True)
-        kept = []
-        for cand in detections:
-            if all(_iou(cand, k) < params['secondary_iou'] for k in kept):
-                kept.append(cand)
-        
-        # Save ALL detections for debug (including low confidence)
-        all_detections_for_debug = kept.copy()
-        
-        # Apply confidence filtering for final count only
-        user_conf_threshold = params.get('user_conf_threshold', 0.5)
-        final_detections = [d for d in kept if d['confidence'] >= user_conf_threshold]
-        
-        return {
-            'people_count': len(final_detections),
-            'detections': all_detections_for_debug,  # Debug gets ALL detections
-            'final_detections': final_detections,    # Final count uses filtered detections
-            'inference_time': inference_time,
-            'model_name': model_name
-        }
-
-
-    def _infer(self, frame, cfg):
-        """
-        Route to model family; capture errors for diagnostics.
-        Enhanced with proper fallback caching (no retry - detection interval handles timing).
-        """
-        runtime = (cfg or {}).get("runtime", {}) or {}
-        model_name = str(runtime.get("selected_model", "YOLOv11x")).lower()
-        
-        try:
-            self.last_error = None
-            return self._infer_ultralytics(frame, cfg)
-        except Exception as e:
-            self.last_error = "{}: {}".format(type(e).__name__, e)
-            print(f"❌ Detection inference failed: {self.last_error}")
-            
-            # Use cached fallback - return last successful count (no retry needed due to detection interval)
-            fallback_count = getattr(self, '_last_successful_people_count', 0)
-            print(f"🔄 DEBUG: Using cached fallback people count: {fallback_count} (next detection in {(cfg or {}).get('runtime', {}).get('detection_interval', 1.0)}s)")
-            return {
-                'people_count': fallback_count,
-                'detections': [],
-                'inference_time': 0.0,
-                'model_name': 'cached-fallback'
-            }
-
-    def _infer_batch(self, frame_list, cfg):
-        """
-        Batch inference for multiple consecutive frames.
-        Much more efficient than individual frame inference.
-        """
-        if not frame_list:
-            return []
-            
-        runtime = (cfg or {}).get("runtime", {}) or {}
-        model_name = str(runtime.get("selected_model", "YOLOv11x"))
-        params = self._get_model_params(cfg)
-        
-        print(f"🚀 BATCH INFERENCE: Processing {len(frame_list)} consecutive frames with {model_name}")
-        
-        try:
-        
-            # Get model from cache
-            model_files = {
-                'YOLOv8m': 'yolov8m.pt',
-                'YOLOv8x': 'yolov8x.pt', 
-                'YOLOv9e': 'yolov9e.pt',
-                'YOLOv10x': 'yolov10x.pt',
-                'YOLOv11l': 'yolo11l.pt',
-                'YOLOv11x': 'yolo11x.pt',
-                'YOLOv12l': 'yolo12l.pt',
-                'YOLOv12x': 'yolo12x.pt',
-            }
-            
-            model_file = model_files.get(model_name, f"{model_name}.pt")
-            key = f"ultra::{model_file}::{params['half']}"
-            
-            if key not in self.model_cache:
-                try:
-                    self.model_cache[key] = YOLO(model_file)
-                except Exception:
-                    self.model_cache[key] = YOLO("yolov8m.pt")  # fallback
-                    
-            model = self.model_cache[key]
-            
-            # Batch inference - MUCH faster than individual calls
-            start_time = time.time()
-            with torch.inference_mode():
-                results = model.predict(
-                    source=frame_list,  # List of frames for batch processing
-                    imgsz=params['imgsz'], 
-                    conf=params['conf'], 
-                    iou=params['primary_iou'],
-                    half=params['half'], 
-                    verbose=False,
-                    classes=[0],  # person only
-                    max_det=params['max_det'],
-                    augment=params['use_tta']
-                )
-            
-            batch_inference_time = time.time() - start_time
-            avg_inference_time = batch_inference_time / len(frame_list)
-            
-            print(f"🚀 BATCH: {len(frame_list)} frames in {batch_inference_time*1000:.1f}ms (avg: {avg_inference_time*1000:.1f}ms/frame)")
-            
-            # Process batch results
-            batch_results = []
-            for i, (result, frame) in enumerate(zip(results, frame_list)):
-                h, w = frame.shape[:2]
-                img_area = float(max(1, h * w))
-                min_h = max(1.0, h * params['min_height_ratio'])
-                min_area = max(1.0, img_area * params['min_area_ratio'])
-                
-                # Get polygon ROI if enabled
-                poly = (cfg or {}).get("polygon_cropping", {}) or {}
-                roi_polygon = None
-                if bool(poly.get("enabled", False)):
-                    pts = poly.get("points") or []
-                    if len(pts) >= 3:
-                        pixel_points = self._polygon_points_to_pixels(pts, w, h)
-                        roi_polygon = [(pt[0], pt[1]) for pt in pixel_points]
-                
-                def _inside_roi_center(bbox, polygon):
-                    if not polygon:
-                        return True
-                    cx = int((bbox[0] + bbox[2]) * 0.5)
-                    cy = int((bbox[1] + bbox[3]) * 0.5)
-                    poly_np = np.array(polygon, dtype=np.int32).reshape(-1, 1, 2)
-                    return cv2.pointPolygonTest(poly_np, (cx, cy), False) >= 0
-                
-                detections = []
-                for b in getattr(result, 'boxes', []) or []:
-                    xyxy = b.xyxy[0].tolist()
-                    score = float(b.conf[0].item())
-                    x1, y1, x2, y2 = map(float, xyxy)
-                    
-                    # Apply enhanced filters
-                    if (y2 - y1) < min_h:
-                        continue
-                    if (x2 - x1) * (y2 - y1) < min_area:
-                        continue
-                    if not _inside_roi_center([x1, y1, x2, y2], roi_polygon):
-                        continue
-                        
-                    detections.append({
-                        'bbox': [int(x1), int(y1), int(x2), int(y2)],
-                        'confidence': score
-                    })
-                
-                # Secondary IoU suppression
-                def _iou(a, b):
-                    ax1, ay1, ax2, ay2 = a['bbox']
-                    bx1, by1, bx2, by2 = b['bbox']
-                    inter_x1 = max(ax1, bx1)
-                    inter_y1 = max(ay1, by1)
-                    inter_x2 = min(ax2, bx2)
-                    inter_y2 = min(ay2, by2)
-                    inter = max(0, inter_x2 - inter_x1) * max(0, inter_y2 - inter_y1)
-                    area_a = max(0, ax2-ax1) * max(0, ay2-ay1)
-                    area_b = max(0, bx2-bx1) * max(0, by2-by1)
-                    union = area_a + area_b - inter + 1e-6
-                    return inter / union
-                
-                detections.sort(key=lambda d: d['confidence'], reverse=True)
-                kept = []
-                for cand in detections:
-                    if all(_iou(cand, k) < params['secondary_iou'] for k in kept):
-                        kept.append(cand)
-                
-                # Save ALL detections for debug (including low confidence)
-                all_detections_for_debug = kept.copy()
-                
-                # Apply confidence filtering for final count only
-                user_conf_threshold = params.get('user_conf_threshold', 0.5)
-                final_detections = [d for d in kept if d['confidence'] >= user_conf_threshold]
-                
-                batch_results.append({
-                    'people_count': len(final_detections),
-                    'detections': all_detections_for_debug,  # Debug gets ALL detections
-                    'final_detections': final_detections,    # Final count uses filtered detections
-                    'inference_time': avg_inference_time,
-                    'model_name': model_name,
-                    'frame_index': i
-                })
-                
-                print(f"   Frame {i+1}: {len(final_detections)} people (from {len(all_detections_for_debug)} total detections)")
-            
-            return batch_results
-            
-        except Exception as e:
-            print(f"❌ Batch inference failed: {e}")
-            
-            # Use cached fallback for all frames (no retry needed due to detection interval)
-            fallback_count = getattr(self, '_last_successful_people_count', 0)
-            det_interval = (cfg or {}).get('runtime', {}).get('detection_interval', 1.0)
-            print(f"🔄 DEBUG: Using cached fallback for batch: {fallback_count} people per frame (next detection in {det_interval}s)")
-            
-            batch_results = []
-            for i, frame in enumerate(frame_list):
-                batch_results.append({
-                    'people_count': fallback_count,
-                    'detections': [],
-                    'inference_time': 0.0,
-                    'model_name': 'cached-batch-fallback',
-                    'frame_index': i
-                })
-            return batch_results
-
-    def get_consecutive_frames(self, n=5):
-        """Get N most recent consecutive frames from buffer"""
-        with self.frame_buffer_lock:
-            if len(self.consecutive_frame_buffer) >= n:
-                # Get last N frames
-                recent_frames = list(self.consecutive_frame_buffer)[-n:]
-                return [frame_data['frame'] for frame_data in recent_frames], recent_frames
-            else:
-                print(f"⚠️  Only {len(self.consecutive_frame_buffer)} frames available, need {n}")
-                return [], []
 
     # ---------------- Tracking methods ----------------
     
@@ -778,7 +454,7 @@ class SharedState:
                     verbose=False,
                     classes=[0],  # person only
                     max_det=params['max_det'],
-                    augment=params['use_tta']
+                    augment=False
                 )
 
             
@@ -1275,6 +951,9 @@ class SharedState:
                     # Update committed count for next detection
                     self._tracker_last_count = people_count
                     
+                    # Extract track IDs early for buffer usage
+                    track_ids = [t['track_id'] for t in tracking_result['valid_tracks']]
+                    
                     # Apply batch-based median averaging if enabled
                     # Collects X frames, calculates average, displays, then starts fresh
                     median_enabled = bool(cs.get("median_enabled", False))
@@ -1282,23 +961,28 @@ class SharedState:
                         median_frame_size = int(cs.get("median_frame_size", 5))
                         median_frame_size = max(2, min(10, median_frame_size))  # Clamp to 2-10
                         
-                        # Add current count to buffer
+                        # Add current count and IDs to buffer
                         self._tracking_median_buffer.append(people_count)
+                        self._tracking_ids_buffer.append(sorted(track_ids))
                         
                         # Check if buffer is full - calculate average and clear for fresh batch
                         if len(self._tracking_median_buffer) >= median_frame_size:
                             averaged_count = int(round(sum(self._tracking_median_buffer) / len(self._tracking_median_buffer)))
                             print(f"📊 BATCH MEDIAN: Collected {list(self._tracking_median_buffer)} → Average: {averaged_count} → Starting fresh batch")
                             people_count = averaged_count
+                            self._internal_count = people_count  # Update internal truth
                             # Clear buffer for fresh batch
                             self._tracking_median_buffer.clear()
+                            self._tracking_ids_buffer.clear()
                         else:
-                            # Still collecting frames, use last displayed count
-                            print(f"📊 COLLECTING: {len(self._tracking_median_buffer)}/{median_frame_size} frames collected, using last count: {self.people_count}")
-                            people_count = self.people_count  # Keep displaying last averaged count
+                            # Still collecting frames, use last known internal count
+                            print(f"📊 COLLECTING: {len(self._tracking_median_buffer)}/{median_frame_size} frames collected, using last count: {self._internal_count}")
+                            people_count = self._internal_count  # Use internal truth, not displayed value
                     else:
                         # Clear buffer if median is disabled
                         self._tracking_median_buffer.clear()
+                        self._tracking_ids_buffer.clear()
+                        self._internal_count = people_count  # Update internal truth
                     
                     # Save frame with 0.25% probability when queue is empty (tracker mode only)
                     if people_count == 0:
@@ -1310,19 +994,45 @@ class SharedState:
                     # Calculate wait time
                     wait_seconds = self._estimate_wait(people_count, cfg)
                     
-                    with self.lock:
-                        self.people_count = people_count
-                        self.wait_time = wait_seconds
-                        self.last_frame_ts = now
-                        
-                        # Cache successful values
-                        self._last_successful_people_count = people_count
-                        self._last_successful_wait_time = wait_seconds
-                        self._last_successful_timestamp = now
+                    # Check display refresh interval
+                    display_interval = float((cfg or {}).get("display_config", {}).get("refresh_interval", 0.0))
+                    time_since_display_update = now - self.last_display_update_time
                     
-                    track_ids = [t['track_id'] for t in tracking_result['valid_tracks']]
+                    should_update_display = True
+                    if display_interval > 0 and time_since_display_update < display_interval:
+                        should_update_display = False
+                        print(f"⏳ DISPLAY: Holding update (elapsed {time_since_display_update:.1f}s < {display_interval}s)")
+                    
+                    if should_update_display:
+                        with self.lock:
+                            self.people_count = people_count
+                            self.wait_time = wait_seconds
+                            self.last_frame_ts = now
+                            self.last_display_update_time = now
+                            
+                            # Cache successful values
+                            self._last_successful_people_count = people_count
+                            self._last_successful_wait_time = wait_seconds
+                            self._last_successful_timestamp = now
+                    else:
+                        # Even if we don't update display, we update internal tracking state?
+                        # Actually, self.people_count IS the display state.
+                        # So we just don't update self.people_count.
+                        pass
+                    
+                    # Check for duplicate IDs in current frame (sanity check)
+                    seen = set()
+                    duplicates = [x for x in track_ids if x in seen or seen.add(x)]
+                    
                     print(f"📊 TRACKING UPDATE:")
                     print(f"   Active tracks: {sorted(track_ids)}")
+                    if median_enabled:
+                        print(f"   Buffer tracks: {list(self._tracking_ids_buffer)}")
+                    if duplicates:
+                        print(f"   ⚠️ DUPLICATE IDs: {duplicates}")
+                    else:
+                        print(f"   Duplicate IDs: None")
+                        
                     print(f"   Raw track count: {raw_track_count}")
                     print(f"   Rate-limited count: {people_count} (max_delta: ±{max_delta})")
                     print(f"   Wait time: {wait_seconds:.1f}s ({wait_seconds/60:.1f} min)")
