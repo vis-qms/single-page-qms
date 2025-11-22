@@ -16,7 +16,7 @@
   },
   "runtime": {
     "frame_read_fps": 30,
-    "detection_interval": 0.1,
+    "detection_interval": 1,
     "half_precision": false,
     "image_quality": "High (Sharp)",
     "confidence_threshold": 0.6,
@@ -24,7 +24,7 @@
     "per_person_time_min": 30,
     "per_person_time_max": 35,
     "people_adjustment": 0,
-    "selected_model": "YOLOv8m",
+    "selected_model": "YOLOv11x",
     "max_det": 100,
     "primary_iou": 0.68,
     "min_height_ratio": 0.018,
@@ -34,10 +34,10 @@
     "method": "Tracking",
     "max_delta_per_detection": 2,
     "tracker_type": "botsort",
-    "median_enabled": true,
+    "median_enabled": false,
     "median_frame_size": 3,
     "bytetrack": {
-      "track_buffer": 120,
+      "track_buffer": 30,
       "track_high_thresh": 0.6,
       "track_low_thresh": 0.3,
       "match_thresh": 0.7,
@@ -45,7 +45,7 @@
       "fuse_score": false
     },
     "botsort": {
-      "track_buffer": 120,
+      "track_buffer": 30,
       "track_high_thresh": 0.6,
       "track_low_thresh": 0.3,
       "match_thresh": 0.7,
@@ -58,7 +58,7 @@
     }
   },
   "polygon_cropping": {
-    "enabled": false,
+    "enabled": true,
     "points_count": 4,
     "points": [
       {
@@ -66,24 +66,54 @@
         "y": 0.04479166666666667
       },
       {
-        "x": 0.908929594647049,
-        "y": 0.022604839918752784
+        "x": 0.855865478515625,
+        "y": 0.04895833333333333
       },
       {
-        "x": 0.8852701428809079,
-        "y": 0.9353339124969964
+        "x": 0.9285217285156251,
+        "y": 0.9697916666666667
       },
       {
-        "x": 0.08828735351562496,
-        "y": 0.940625
+        "x": 0.11758422851562497,
+        "y": 0.9364583333333333
       },
       {
-        "x": 0.05313110351562496,
-        "y": 0.6177083333333333
+        "x": 0.14219360351562496,
+        "y": 0.5385416666666667
       },
       {
         "x": 0.10938110351562497,
         "y": 0.3072916666666667
+      },
+      {
+        "x": 0.10469360351562497,
+        "y": 0.08854166666666667
+      },
+      {
+        "x": 0.12578735351562498,
+        "y": 0.065625
+      }
+    ]
+  },
+  "queue_region": {
+    "enabled": true,
+    "points_count": 4,
+    "points": [
+      {
+        "x": 0.42578735351562497,
+        "y": 0.265625
+      },
+      {
+        "x": 0.697662353515625,
+        "y": 0.146875
+      },
+      {
+        "x": 0.767974853515625,
+        "y": 0.9239583333333333
+      },
+      {
+        "x": 0.37305297851562497,
+        "y": 0.865625
       }
     ]
   },
@@ -93,7 +123,7 @@
     "value_font_size": 1,
     "hide_people_count": false,
     "time_format": "minute_range",
-    "refresh_interval": 2
+    "refresh_interval": 3
   },
   "debug": {
     "enabled": false,

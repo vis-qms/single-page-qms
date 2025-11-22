@@ -502,37 +502,81 @@
     <!-- Polygon ROI -->
     <section class="card">
       <h2>Polygon Region of Interest</h2>
-      <div class="row">
-        <div><label>Enable Polygon ROI
-            <select id="poly_enabled">
-              <option value="false">Disabled</option>
-              <option value="true">Enabled</option>
+      
+      <!-- Edit Mode Selector -->
+      <div class="row" style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #2E3A52;">
+        <div><label>Edit Mode
+            <select id="edit_mode" style="border-color: #9CC2FF;">
+              <option value="crop">Crop Polygon (Red)</option>
+              <option value="queue">Queue Region (Green)</option>
             </select></label></div>
-        <div><label>Number of Points
-            <select id="polygon_points_count">
-              <option value="4">4 Points (Rectangle)</option>
-              <option value="5">5 Points (Pentagon)</option>
-              <option value="6">6 Points (Hexagon)</option>
-              <option value="7">7 Points (Heptagon)</option>
-              <option value="8">8 Points (Octagon)</option>
-            </select></label></div>
+        <div class="muted" style="margin-top: 30px;">Select which region to edit on the preview</div>
       </div>
 
-      <div class="row" style="margin-top: 12px;">
-        <div style="grid-column: 1 / -1;">
-          <label>Polygon Points JSON
-            <textarea id="poly_points" style="height:80px;"
-              placeholder='[{"x":0.0,"y":0.0},{"x":1.0,"y":0.0},{"x":1.0,"y":1.0},{"x":0.0,"y":1.0}]'></textarea>
-          </label>
-          <div class="muted">Click on preview to add points, drag to move them</div>
+      <!-- Crop Polygon Controls -->
+      <div id="crop_controls">
+        <h3 style="font-size: 14px; margin: 0 0 8px 0; color: #ff6b6b;">🟥 Crop Polygon (Relaxed)</h3>
+        <div class="row">
+          <div><label>Enable Crop Polygon
+              <select id="poly_enabled">
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
+              </select></label></div>
+          <div><label>Number of Points
+              <select id="polygon_points_count">
+                <option value="4">4 Points (Rectangle)</option>
+                <option value="5">5 Points (Pentagon)</option>
+                <option value="6">6 Points (Hexagon)</option>
+                <option value="7">7 Points (Heptagon)</option>
+                <option value="8">8 Points (Octagon)</option>
+              </select></label></div>
+        </div>
+        <div class="row" style="margin-top: 12px;">
+          <div style="grid-column: 1 / -1;">
+            <label>Crop Points JSON
+              <textarea id="poly_points" style="height:60px;"
+                placeholder='[{"x":0.0,"y":0.0},{"x":1.0,"y":0.0},{"x":1.0,"y":1.0},{"x":0.0,"y":1.0}]'></textarea>
+            </label>
+          </div>
+        </div>
+        <div class="row" style="margin-top: 8px;">
+          <div><button type="button" id="resetPolygonBtn"
+              style="padding: 6px 12px; background: #b41f1f; color: white; border: none; border-radius: 4px; cursor: pointer;">🔄
+              Reset Crop</button></div>
         </div>
       </div>
 
-      <div class="row" style="margin-top: 8px;">
-        <div><button type="button" id="resetPolygonBtn"
-            style="padding: 8px 16px; background: #1f77b4; color: white; border: none; border-radius: 4px; cursor: pointer;">🔄
-            Reset to Default</button></div>
-        <div></div>
+      <!-- Queue Region Controls -->
+      <div id="queue_controls" style="display: none; margin-top: 12px;">
+        <h3 style="font-size: 14px; margin: 0 0 8px 0; color: #4cff8f;">🟩 Queue Region (Strict)</h3>
+        <div class="row">
+          <div><label>Enable Queue Region
+              <select id="queue_enabled">
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
+              </select></label></div>
+          <div><label>Number of Points
+              <select id="queue_points_count">
+                <option value="4">4 Points (Rectangle)</option>
+                <option value="5">5 Points (Pentagon)</option>
+                <option value="6">6 Points (Hexagon)</option>
+                <option value="7">7 Points (Heptagon)</option>
+                <option value="8">8 Points (Octagon)</option>
+              </select></label></div>
+        </div>
+        <div class="row" style="margin-top: 12px;">
+          <div style="grid-column: 1 / -1;">
+            <label>Queue Points JSON
+              <textarea id="queue_points" style="height:60px;"
+                placeholder='[{"x":0.2,"y":0.2},{"x":0.8,"y":0.2},{"x":0.8,"y":0.8},{"x":0.2,"y":0.8}]'></textarea>
+            </label>
+          </div>
+        </div>
+        <div class="row" style="margin-top: 8px;">
+          <div><button type="button" id="resetQueueBtn"
+              style="padding: 6px 12px; background: #2e7d32; color: white; border: none; border-radius: 4px; cursor: pointer;">🔄
+              Reset Queue</button></div>
+        </div>
       </div>
     </section>
 
@@ -769,14 +813,16 @@
     const canvas = document.getElementById("polyCanvas");
     const imgEl = document.getElementById("previewImg");
     let polyPoints = [];
+    let queuePoints = [];
     let draggingIdx = -1;
+    let editMode = "crop"; // 'crop' or 'queue'
 
     function loadPolyFromTextarea() {
+      // Load Crop Points
       try {
         const text = $("poly_points").value || "[]";
         polyPoints = JSON.parse(text);
         if (!Array.isArray(polyPoints)) polyPoints = [];
-        // Convert any percentage values to normalized values
         polyPoints = polyPoints.map(p => ({
           x: Math.max(0, Math.min(1, (p.x > 1 ? p.x / 100 : p.x))),
           y: Math.max(0, Math.min(1, (p.y > 1 ? p.y / 100 : p.y)))
@@ -784,6 +830,20 @@
       } catch (e) {
         polyPoints = [];
       }
+
+      // Load Queue Points
+      try {
+        const text = $("queue_points").value || "[]";
+        queuePoints = JSON.parse(text);
+        if (!Array.isArray(queuePoints)) queuePoints = [];
+        queuePoints = queuePoints.map(p => ({
+          x: Math.max(0, Math.min(1, (p.x > 1 ? p.x / 100 : p.x))),
+          y: Math.max(0, Math.min(1, (p.y > 1 ? p.y / 100 : p.y)))
+        }));
+      } catch (e) {
+        queuePoints = [];
+      }
+
       drawPoly();
     }
 
@@ -849,17 +909,18 @@
       ctx.scale(devicePixelRatio, devicePixelRatio);
       ctx.clearRect(0, 0, rect.width, rect.height);
 
-      // Only draw polygon if enabled
-      if ($("poly_enabled").value === "true") {
-        if (polyPoints.length >= 3) {
-          // Draw semi-transparent overlay outside polygon
+      // Helper to draw a single polygon
+      function drawSinglePoly(points, color, isFilled, isActive) {
+        if (!points || points.length < 1) return;
+
+        // Draw fill if needed (for crop mask)
+        if (isFilled && points.length >= 3) {
+          ctx.save();
           ctx.fillStyle = "rgba(0,0,0,0.4)";
           ctx.fillRect(0, 0, rect.width, rect.height);
-
-          ctx.save();
           ctx.globalCompositeOperation = "destination-out";
           ctx.beginPath();
-          polyPoints.forEach((p, i) => {
+          points.forEach((p, i) => {
             const { x, y } = normToPx(p);
             if (i === 0) ctx.moveTo(x, y);
             else ctx.lineTo(x, y);
@@ -869,34 +930,57 @@
           ctx.restore();
         }
 
-        if (polyPoints.length) {
-          // Draw polygon outline
-          ctx.strokeStyle = "#9CC2FF";
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          polyPoints.forEach((p, i) => {
-            const { x, y } = normToPx(p);
-            if (i === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-          });
-          if (polyPoints.length >= 3) ctx.closePath();
-          ctx.stroke();
+        // Draw outline
+        ctx.strokeStyle = color;
+        ctx.lineWidth = isActive ? 3 : 2;
+        ctx.setLineDash(isActive ? [] : [5, 5]); // Dashed if not active
+        ctx.beginPath();
+        points.forEach((p, i) => {
+          const { x, y } = normToPx(p);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        if (points.length >= 3) ctx.closePath();
+        ctx.stroke();
+        ctx.setLineDash([]);
 
-          // Draw control points (cursors)
-          ctx.fillStyle = "#1f77b4";
-          polyPoints.forEach(p => {
+        // Draw control points (cursors) only if active
+        if (isActive) {
+          ctx.fillStyle = color;
+          points.forEach(p => {
             const { x, y } = normToPx(p);
             ctx.beginPath();
             ctx.arc(x, y, 6, 0, Math.PI * 2);
             ctx.fill();
+            // White center
+            ctx.fillStyle = "#fff";
+            ctx.beginPath();
+            ctx.arc(x, y, 2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = color;
           });
         }
       }
+
+      // Draw Crop Polygon (Red)
+      if ($("poly_enabled").value === "true") {
+        drawSinglePoly(polyPoints, "#ff6b6b", true, editMode === "crop");
+      }
+
+      // Draw Queue Region (Green)
+      if ($("queue_enabled").value === "true") {
+        drawSinglePoly(queuePoints, "#4cff8f", false, editMode === "queue");
+      }
+    }
+
+    function getActivePoints() {
+      return editMode === "crop" ? polyPoints : queuePoints;
     }
 
     function nearestPointIdx(x, y) {
+      const points = getActivePoints();
       let best = -1, bestDist = 15;
-      polyPoints.forEach((p, i) => {
+      points.forEach((p, i) => {
         const pt = normToPx(p);
         const dist = Math.hypot(pt.x - x, pt.y - y);
         if (dist < bestDist) {
@@ -909,8 +993,9 @@
 
     // Canvas mouse events
     canvas.addEventListener("mousedown", (e) => {
-      // Only handle mouse events if polygon cropping is enabled
-      if ($("poly_enabled").value !== "true") return;
+      // Check if current mode is enabled
+      const isEnabled = editMode === "crop" ? $("poly_enabled").value === "true" : $("queue_enabled").value === "true";
+      if (!isEnabled) return;
 
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
@@ -924,8 +1009,9 @@
 
       // Add new point
       const norm = pxToNorm(x, y);
-      polyPoints.push(norm);
-      $("poly_points").value = JSON.stringify(polyPoints, null, 2);
+      const points = getActivePoints();
+      points.push(norm);
+      updatePolygonTextarea();
       drawPoly();
       autosavePolygonDebounced();
     });
@@ -937,14 +1023,18 @@
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
 
-      polyPoints[draggingIdx] = pxToNorm(x, y);
-      $("poly_points").value = JSON.stringify(polyPoints, null, 2);
-      drawPoly();
+      const points = getActivePoints();
+      if (points[draggingIdx]) {
+        points[draggingIdx] = pxToNorm(x, y);
+        updatePolygonTextarea();
+        drawPoly();
+      }
     });
 
     canvas.addEventListener("dblclick", (e) => {
-      // Only handle double-click if polygon cropping is enabled
-      if ($("poly_enabled").value !== "true") return;
+      // Check if current mode is enabled
+      const isEnabled = editMode === "crop" ? $("poly_enabled").value === "true" : $("queue_enabled").value === "true";
+      if (!isEnabled) return;
 
       // Double-click to remove point
       const rect = canvas.getBoundingClientRect();
@@ -952,9 +1042,10 @@
       const y = e.clientY - rect.top;
 
       const idx = nearestPointIdx(x, y);
-      if (idx >= 0 && polyPoints.length > 3) {
-        polyPoints.splice(idx, 1);
-        $("poly_points").value = JSON.stringify(polyPoints, null, 2);
+      const points = getActivePoints();
+      if (idx >= 0 && points.length > 3) {
+        points.splice(idx, 1);
+        updatePolygonTextarea();
         drawPoly();
         autosavePolygonDebounced();
       }
@@ -969,17 +1060,18 @@
 
     // Polygon point count management
     function ensurePolygonPointsCount(targetCount) {
-      const currentCount = polyPoints.length;
+      let points = getActivePoints();
+      const currentCount = points.length;
       const count = parseInt(targetCount);
 
       if (currentCount < count) {
         // Add new points at center
         for (let i = currentCount; i < count; i++) {
-          polyPoints.push({ x: 0.5, y: 0.5 });
+          points.push({ x: 0.5, y: 0.5 });
         }
       } else if (currentCount > count) {
         // Remove excess points
-        polyPoints = polyPoints.slice(0, count);
+        points.splice(count);
       }
 
       updatePolygonTextarea();
@@ -987,33 +1079,29 @@
     }
 
     function resetPolygonToDefault() {
-      const count = parseInt($("polygon_points_count").value);
-
+      const count = parseInt(editMode === "crop" ? $("polygon_points_count").value : $("queue_points_count").value);
+      
+      let newPoints = [];
       if (count === 3) {
-        polyPoints = [
-          { x: 0.0, y: 0.0 },
-          { x: 1.0, y: 0.0 },
-          { x: 1.0, y: 1.0 }
-        ];
+        newPoints = [{ x: 0.0, y: 0.0 }, { x: 1.0, y: 0.0 }, { x: 1.0, y: 1.0 }];
       } else if (count === 4) {
-        polyPoints = [
-          { x: 0.0, y: 0.0 },
-          { x: 1.0, y: 0.0 },
-          { x: 1.0, y: 1.0 },
-          { x: 0.0, y: 1.0 }
-        ];
-      } else {
-        // For 5+ points, create a rectangle with additional center points
-        polyPoints = [
-          { x: 0.0, y: 0.0 },
-          { x: 1.0, y: 0.0 },
-          { x: 1.0, y: 1.0 },
-          { x: 0.0, y: 1.0 }
-        ];
-        // Add extra points at center
-        for (let i = 4; i < count; i++) {
-          polyPoints.push({ x: 0.5, y: 0.5 });
+        // Default box differs slightly for queue vs crop to be visible
+        if (editMode === "queue") {
+          newPoints = [{ x: 0.2, y: 0.2 }, { x: 0.8, y: 0.2 }, { x: 0.8, y: 0.8 }, { x: 0.2, y: 0.8 }];
+        } else {
+          newPoints = [{ x: 0.0, y: 0.0 }, { x: 1.0, y: 0.0 }, { x: 1.0, y: 1.0 }, { x: 0.0, y: 1.0 }];
         }
+      } else {
+        newPoints = [{ x: 0.0, y: 0.0 }, { x: 1.0, y: 0.0 }, { x: 1.0, y: 1.0 }, { x: 0.0, y: 1.0 }];
+        for (let i = 4; i < count; i++) {
+          newPoints.push({ x: 0.5, y: 0.5 });
+        }
+      }
+
+      if (editMode === "crop") {
+        polyPoints = newPoints;
+      } else {
+        queuePoints = newPoints;
       }
 
       updatePolygonTextarea();
@@ -1022,31 +1110,65 @@
     }
 
     function updatePolygonTextarea() {
-      $("poly_points").value = JSON.stringify(polyPoints, null, 2);
+      if (editMode === "crop") {
+        $("poly_points").value = JSON.stringify(polyPoints, null, 2);
+      } else {
+        $("queue_points").value = JSON.stringify(queuePoints, null, 2);
+      }
     }
 
     // Event listeners for polygon controls
     $("polygon_points_count").addEventListener("change", (e) => {
-      ensurePolygonPointsCount(e.target.value);
-      autosavePolygonDebounced();
+      if (editMode === "crop") {
+        ensurePolygonPointsCount(e.target.value);
+        autosavePolygonDebounced();
+      }
+    });
+    
+    $("queue_points_count").addEventListener("change", (e) => {
+      if (editMode === "queue") {
+        ensurePolygonPointsCount(e.target.value);
+        autosavePolygonDebounced();
+      }
     });
 
-    $("resetPolygonBtn").addEventListener("click", resetPolygonToDefault);
+    $("resetPolygonBtn").addEventListener("click", () => {
+      if (editMode === "crop") resetPolygonToDefault();
+    });
+    
+    $("resetQueueBtn").addEventListener("click", () => {
+      if (editMode === "queue") resetPolygonToDefault();
+    });
+
+    // Edit mode switcher
+    $("edit_mode").addEventListener("change", (e) => {
+      editMode = e.target.value;
+      $("crop_controls").style.display = editMode === "crop" ? "block" : "none";
+      $("queue_controls").style.display = editMode === "queue" ? "block" : "none";
+      drawPoly();
+    });
 
     // Redraw polygon when enable/disable toggle changes
     $("poly_enabled").addEventListener("change", () => {
       drawPoly();
+      autosavePolygonDebounced();
+    });
+    
+    $("queue_enabled").addEventListener("change", () => {
+      drawPoly();
+      autosavePolygonDebounced();
     });
 
     // Resize observer for canvas
     new ResizeObserver(() => drawPoly()).observe(canvas);
 
-    // Polygon event listeners
-    $("poly_enabled").addEventListener("change", () => {
-      drawPoly();
+    // Manual input listeners
+    $("poly_points").addEventListener("input", () => {
+      loadPolyFromTextarea();
       autosavePolygonDebounced();
     });
-    $("poly_points").addEventListener("input", () => {
+    
+    $("queue_points").addEventListener("input", () => {
       loadPolyFromTextarea();
       autosavePolygonDebounced();
     });
@@ -1064,6 +1186,7 @@
     async function autosavePolygon() {
       try {
         const cfg = await getCurrentConfig();
+        // Save Crop Polygon
         cfg.polygon_cropping = cfg.polygon_cropping || {};
         cfg.polygon_cropping.enabled = ($("poly_enabled").value === "true");
         cfg.polygon_cropping.points_count = parseInt($("polygon_points_count").value);
@@ -1071,6 +1194,16 @@
           cfg.polygon_cropping.points = JSON.parse($("poly_points").value || "[]");
         } catch (e) {
           cfg.polygon_cropping.points = [];
+        }
+
+        // Save Queue Region
+        cfg.queue_region = cfg.queue_region || {};
+        cfg.queue_region.enabled = ($("queue_enabled").value === "true");
+        cfg.queue_region.points_count = parseInt($("queue_points_count").value);
+        try {
+          cfg.queue_region.points = JSON.parse($("queue_points").value || "[]");
+        } catch (e) {
+          cfg.queue_region.points = [];
         }
 
         await fetch("/api/config", {
@@ -1167,6 +1300,11 @@
         $("poly_enabled").value = String(cfg.polygon_cropping?.enabled ?? false);
         $("polygon_points_count").value = cfg.polygon_cropping?.points_count ?? 4;
         $("poly_points").value = JSON.stringify(cfg.polygon_cropping?.points || [], null, 2);
+
+        // Queue Region
+        $("queue_enabled").value = String(cfg.queue_region?.enabled ?? false);
+        $("queue_points_count").value = cfg.queue_region?.points_count ?? 4;
+        $("queue_points").value = JSON.stringify(cfg.queue_region?.points || [], null, 2);
 
         // Wait for image to be loaded before drawing polygon
         const img = document.getElementById("previewImg");
@@ -1299,6 +1437,12 @@
             enabled: $("poly_enabled").value === "true",
             points_count: parseInt($("polygon_points_count").value),
             points: JSON.parse($("poly_points").value || "[]")
+          },
+
+          queue_region: {
+            enabled: $("queue_enabled").value === "true",
+            points_count: parseInt($("queue_points_count").value),
+            points: JSON.parse($("queue_points").value || "[]")
           },
 
           display_config: {

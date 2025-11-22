@@ -931,135 +931,198 @@ class SharedState:
                 # Update display at detection_interval
                 time_since_last = now - last_det
                 if time_since_last >= det_interval:
-                    # Trust ByteTrack/BoT-SORT - count the tracks it returns
-                    raw_track_count = len(tracking_result['valid_tracks'])
+                    # Get all tracks initially
+                    all_tracks = tracking_result['valid_tracks']
                     
-                    # Apply max_delta protection for tracking mode (safety against sudden spikes)
-                    cs = (cfg or {}).get("count_stabilization", {}) or {}
-                    max_delta = int(cs.get("max_delta_per_detection", 1))
-                    
-                    delta = raw_track_count - self._tracker_last_count
-                    if delta > max_delta:
-                        people_count = self._tracker_last_count + max_delta
-                        print(f"🛡️  TRACKING: Rate limited +{delta} to +{max_delta} (from {self._tracker_last_count} to {people_count}, raw: {raw_track_count})")
-                    elif delta < -max_delta:
-                        people_count = self._tracker_last_count - max_delta
-                        print(f"🛡️  TRACKING: Rate limited {delta} to -{max_delta} (from {self._tracker_last_count} to {people_count}, raw: {raw_track_count})")
-                    else:
-                        people_count = raw_track_count
-                    
-                    # Update committed count for next detection
-                    self._tracker_last_count = people_count
-                    
-                    # Extract track IDs early for buffer usage
-                    track_ids = [t['track_id'] for t in tracking_result['valid_tracks']]
-                    
-                    # Apply batch-based median averaging if enabled
-                    # Collects X frames, calculates average, displays, then starts fresh
-                    median_enabled = bool(cs.get("median_enabled", False))
-                    if median_enabled:
-                        median_frame_size = int(cs.get("median_frame_size", 5))
-                        median_frame_size = max(2, min(10, median_frame_size))  # Clamp to 2-10
-                        
-                        # Add current count and IDs to buffer
-                        self._tracking_median_buffer.append(people_count)
-                        self._tracking_ids_buffer.append(sorted(track_ids))
-                        
-                        # Check if buffer is full - calculate average and clear for fresh batch
-                        if len(self._tracking_median_buffer) >= median_frame_size:
-                            averaged_count = int(round(sum(self._tracking_median_buffer) / len(self._tracking_median_buffer)))
-                            print(f"📊 BATCH MEDIAN: Collected {list(self._tracking_median_buffer)} → Average: {averaged_count} → Starting fresh batch")
-                            people_count = averaged_count
-                            self._internal_count = people_count  # Update internal truth
-                            # Clear buffer for fresh batch
-                            self._tracking_median_buffer.clear()
-                            self._tracking_ids_buffer.clear()
-                        else:
-                            # Still collecting frames, use last known internal count
-                            print(f"📊 COLLECTING: {len(self._tracking_median_buffer)}/{median_frame_size} frames collected, using last count: {self._internal_count}")
-                            people_count = self._internal_count  # Use internal truth, not displayed value
-                    else:
-                        # Clear buffer if median is disabled
-                        self._tracking_median_buffer.clear()
-                        self._tracking_ids_buffer.clear()
-                        self._internal_count = people_count  # Update internal truth
-                    
-                    # Save frame with 0.25% probability when queue is empty (tracker mode only)
-                    if people_count == 0:
-                        # 0.25% = 0.0025 probability
-                        # Using random integer check: 1 out of 400 (0.25% = 1/400)
-                        if random.randint(1, 400) == 1:
-                            self._save_empty_queue_frame(detection_frame, now)
-                    
-                    # Calculate wait time
-                    wait_seconds = self._estimate_wait(people_count, cfg)
-                    
-                    # Check display refresh interval
-                    display_interval = float((cfg or {}).get("display_config", {}).get("refresh_interval", 0.0))
-                    time_since_display_update = now - self.last_display_update_time
-                    
-                    should_update_display = True
-                    if display_interval > 0 and time_since_display_update < display_interval:
-                        should_update_display = False
-                        print(f"⏳ DISPLAY: Holding update (elapsed {time_since_display_update:.1f}s < {display_interval}s)")
-                    
-                    if should_update_display:
-                        with self.lock:
-                            self.people_count = people_count
-                            self.wait_time = wait_seconds
-                            self.last_frame_ts = now
-                            self.last_display_update_time = now
-                            
-                            # Cache successful values
-                            self._last_successful_people_count = people_count
-                            self._last_successful_wait_time = wait_seconds
-                            self._last_successful_timestamp = now
-                    else:
-                        # Even if we don't update display, we update internal tracking state?
-                        # Actually, self.people_count IS the display state.
-                        # So we just don't update self.people_count.
-                        pass
-                    
-                    # Check for duplicate IDs in current frame (sanity check)
-                    seen = set()
-                    duplicates = [x for x in track_ids if x in seen or seen.add(x)]
-                    
-                    print(f"📊 TRACKING UPDATE:")
-                    print(f"   Active tracks: {sorted(track_ids)}")
-                    if median_enabled:
-                        print(f"   Buffer tracks: {list(self._tracking_ids_buffer)}")
-                    if duplicates:
-                        print(f"   ⚠️ DUPLICATE IDs: {duplicates}")
-                    else:
-                        print(f"   Duplicate IDs: None")
-                        
-                    print(f"   Raw track count: {raw_track_count}")
-                    print(f"   Rate-limited count: {people_count} (max_delta: ±{max_delta})")
-                    print(f"   Wait time: {wait_seconds:.1f}s ({wait_seconds/60:.1f} min)")
-                    print(f"   Inference: {tracking_result['inference_time']*1000:.1f}ms")
-                    
-                    # Update telemetry
-                    self.total_detections += 1
-                    if len(self.detection_history) > 0:
-                        recent_times = [r['inference_time'] for r in list(self.detection_history)[-10:]]
-                        self.average_inference_time = sum(recent_times) / len(recent_times)
-                    else:
-                        self.average_inference_time = tracking_result['inference_time']
-                    
-                    # Add to detection history
-                    tracker_name = (cfg or {}).get("count_stabilization", {}).get("tracker_type", "bytetrack").upper()
-                    detection_record = {
-                        'timestamp': now,
-                        'people_count': people_count,
-                        'wait_time': wait_seconds / 60.0,
-                        'model_name': f"{tracker_name}-{tracking_result['model_name']}",
-                        'confidence': float((cfg or {}).get("runtime", {}).get("confidence_threshold", 0.5)),
-                        'inference_time': tracking_result['inference_time']
-                    }
-                    self.detection_history.append(detection_record)
-                    
-                    last_det = now
+                    # --------------------------------------------------------
+            # QUEUE REGION FILTERING (Strict Counting)
+            # --------------------------------------------------------
+            # If queue region is enabled, filter tracks to only those inside
+            queue_region_cfg = (cfg or {}).get("queue_region", {}) or {}
+            filtered_tracks = []
             
+            if bool(queue_region_cfg.get("enabled", False)):
+                qr_points = queue_region_cfg.get("points", [])
+                if len(qr_points) >= 3:
+                    try:
+                        from shapely.geometry import Polygon, Point
+                        
+                        h, w = detection_frame.shape[:2]
+                        # Convert normalized points to pixels
+                        qr_pixel_points = self._polygon_points_to_pixels(qr_points, w, h)
+                        
+                        # Create Shapely polygon
+                        # Shapely expects list of (x, y) tuples
+                        poly_coords = [(p[0], p[1]) for p in qr_pixel_points]
+                        queue_poly = Polygon(poly_coords)
+                        
+                        for track in all_tracks:
+                            bbox = track['bbox'] # [x1, y1, x2, y2]
+                            
+                            # ULTRALYTICS COMPATIBILITY: Use Centroid (Center Point)
+                            # Original Ultralytics implementation uses:
+                            # (box[:4:2].mean(), box[1:4:2].mean()) -> (x_center, y_center)
+                            x_center = int((bbox[0] + bbox[2]) / 2)
+                            y_center = int((bbox[1] + bbox[3]) / 2)
+                            point = Point(x_center, y_center)
+                            
+                            # Check if point is inside polygon
+                            is_inside = queue_poly.contains(point)
+                            
+                            if is_inside:
+                                filtered_tracks.append(track)
+                                
+                    except ImportError:
+                        print("⚠️ Shapely not installed, falling back to OpenCV for queue region")
+                        # Fallback to OpenCV if Shapely fails
+                        h, w = detection_frame.shape[:2]
+                        qr_pixel_points = self._polygon_points_to_pixels(qr_points, w, h)
+                        qr_poly = np.array(qr_pixel_points, dtype=np.int32)
+                        
+                        for track in all_tracks:
+                            bbox = track['bbox']
+                            x_center = int((bbox[0] + bbox[2]) / 2)
+                            y_max = int(bbox[3])
+                            point = (x_center, y_max)
+                            result = cv2.pointPolygonTest(qr_poly, point, False)
+                            if result >= 0:
+                                filtered_tracks.append(track)
+                else:
+                    print("⚠️ Queue region enabled but has < 3 points, using all tracks")
+                    filtered_tracks = all_tracks
+            else:
+                # Not enabled, use all tracks (relaxed mode / crop only)
+                filtered_tracks = all_tracks
+            
+            # Use filtered tracks for counting
+            raw_track_count = len(filtered_tracks)
+            
+            # Apply max_delta protection for tracking mode (safety against sudden spikes)
+            cs = (cfg or {}).get("count_stabilization", {}) or {}
+            max_delta = int(cs.get("max_delta_per_detection", 1))
+            
+            delta = raw_track_count - self._tracker_last_count
+            if delta > max_delta:
+                people_count = self._tracker_last_count + max_delta
+                print(f"🛡️  TRACKING: Rate limited +{delta} to +{max_delta} (from {self._tracker_last_count} to {people_count}, raw: {raw_track_count})")
+            elif delta < -max_delta:
+                people_count = self._tracker_last_count - max_delta
+                print(f"🛡️  TRACKING: Rate limited {delta} to -{max_delta} (from {self._tracker_last_count} to {people_count}, raw: {raw_track_count})")
+            else:
+                people_count = raw_track_count
+            
+            # Update committed count for next detection
+            self._tracker_last_count = people_count
+            
+            # Extract track IDs from FILTERED tracks
+            track_ids = [t['track_id'] for t in filtered_tracks]
+            
+            # Apply batch-based median averaging if enabled
+            # Collects X frames, calculates average, displays, then starts fresh
+            median_enabled = bool(cs.get("median_enabled", False))
+            if median_enabled:
+                median_frame_size = int(cs.get("median_frame_size", 5))
+                median_frame_size = max(2, min(10, median_frame_size))  # Clamp to 2-10
+                
+                # Add current count and IDs to buffer
+                self._tracking_median_buffer.append(people_count)
+                self._tracking_ids_buffer.append(sorted(track_ids))
+                
+                # Check if buffer is full - calculate average and clear for fresh batch
+                if len(self._tracking_median_buffer) >= median_frame_size:
+                    averaged_count = int(round(sum(self._tracking_median_buffer) / len(self._tracking_median_buffer)))
+                    print(f"📊 BATCH MEDIAN: Collected {list(self._tracking_median_buffer)} → Average: {averaged_count} → Starting fresh batch")
+                    people_count = averaged_count
+                    self._internal_count = people_count  # Update internal truth
+                    # Clear buffer for fresh batch
+                    self._tracking_median_buffer.clear()
+                    self._tracking_ids_buffer.clear()
+                else:
+                    # Still collecting frames, use last known internal count
+                    print(f"📊 COLLECTING: {len(self._tracking_median_buffer)}/{median_frame_size} frames collected, using last count: {self._internal_count}")
+                    people_count = self._internal_count  # Use internal truth, not displayed value
+            else:
+                # Clear buffer if median is disabled
+                self._tracking_median_buffer.clear()
+                self._tracking_ids_buffer.clear()
+                self._internal_count = people_count  # Update internal truth
+            
+            # Save frame with 0.25% probability when queue is empty (tracker mode only)
+            if people_count == 0:
+                # 0.25% = 0.0025 probability
+                # Using random integer check: 1 out of 400 (0.25% = 1/400)
+                if random.randint(1, 400) == 1:
+                    self._save_empty_queue_frame(detection_frame, now)
+            
+            # Calculate wait time
+            wait_seconds = self._estimate_wait(people_count, cfg)
+            
+            # Check display refresh interval
+            display_interval = float((cfg or {}).get("display_config", {}).get("refresh_interval", 0.0))
+            time_since_display_update = now - self.last_display_update_time
+            
+            should_update_display = True
+            if display_interval > 0 and time_since_display_update < display_interval:
+                should_update_display = False
+                print(f"⏳ DISPLAY: Holding update (elapsed {time_since_display_update:.1f}s < {display_interval}s)")
+            
+            if should_update_display:
+                with self.lock:
+                    self.people_count = people_count
+                    self.wait_time = wait_seconds
+                    self.last_frame_ts = now
+                    self.last_display_update_time = now
+                    
+                    # Cache successful values
+                    self._last_successful_people_count = people_count
+                    self._last_successful_wait_time = wait_seconds
+                    self._last_successful_timestamp = now
+            else:
+                # Even if we don't update display, we update internal tracking state?
+                # Actually, self.people_count IS the display state.
+                # So we just don't update self.people_count.
+                pass
+            
+            # Check for duplicate IDs in current frame (sanity check)
+            seen = set()
+            duplicates = [x for x in track_ids if x in seen or seen.add(x)]
+            
+            print(f"📊 TRACKING UPDATE:")
+            print(f"   Active tracks: {sorted(track_ids)}")
+            if median_enabled:
+                print(f"   Buffer tracks: {list(self._tracking_ids_buffer)}")
+            if duplicates:
+                print(f"   ⚠️ DUPLICATE IDs: {duplicates}")
+            else:
+                print(f"   Duplicate IDs: None")
+                
+            print(f"   Raw track count: {raw_track_count} (Filtered from {len(all_tracks)})")
+            print(f"   Rate-limited count: {people_count} (max_delta: ±{max_delta})")
+            print(f"   Wait time: {wait_seconds:.1f}s ({wait_seconds/60:.1f} min)")
+            print(f"   Inference: {tracking_result['inference_time']*1000:.1f}ms")
+            
+            # Update telemetry
+            self.total_detections += 1
+            if len(self.detection_history) > 0:
+                recent_times = [r['inference_time'] for r in list(self.detection_history)[-10:]]
+                self.average_inference_time = sum(recent_times) / len(recent_times)
+            else:
+                self.average_inference_time = tracking_result['inference_time']
+            
+            # Add to detection history
+            tracker_name = (cfg or {}).get("count_stabilization", {}).get("tracker_type", "bytetrack").upper()
+            detection_record = {
+                'timestamp': now,
+                'people_count': people_count,
+                'wait_time': wait_seconds / 60.0,
+                'model_name': f"{tracker_name}-{tracking_result['model_name']}",
+                'confidence': float((cfg or {}).get("runtime", {}).get("confidence_threshold", 0.5)),
+                'inference_time': tracking_result['inference_time']
+            }
+            self.detection_history.append(detection_record)
+            
+            last_det = now
+    
             # No sleep - process next frame immediately for continuous tracking
             continue
 
